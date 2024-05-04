@@ -1,4 +1,6 @@
 import { EventEmitter } from 'events';
+import { ChronicleClient, ChronicleClientOptions, createChronicleClient } from 'chronicle-proxy';
+import { WorkflowEventCallback } from '../events.js';
 
 export interface DagNodeInput<CONTEXT extends object, INPUTS extends object> {
   context: CONTEXT;
@@ -28,18 +30,50 @@ export type DagConfiguration<CONTEXT extends object> = Record<
 >;
 
 export class CompiledDag<CONTEXT extends object> {
-  // todo
-  constructor(dag: DagConfiguration<CONTEXT>) {
-    const { leafNodes, rootNodes } = compileDag(dag);
+  info: ReturnType<typeof compileDag>;
 
-    let namedNodes: NamedDagNode<CONTEXT, object, unknown>[] = Object.entries(dag).map(
-      ([name, node]) => ({
-        ...node,
-        name,
-      })
+  namedNodes: NamedDagNode<CONTEXT, object, unknown>[];
+  constructor(dag: DagConfiguration<CONTEXT>) {
+    this.info = compileDag(dag);
+    this.namedNodes = Object.entries(dag).map(([name, node]) => ({
+      ...node,
+      name,
+    }));
+  }
+
+  buildRunners(context: CONTEXT) {
+    const cancel = new EventEmitter<{ cancel: [] }>();
+
+    let nodes = new Map<string, DagNodeRunner<CONTEXT, object, unknown>>();
+
+    for (let node of this.namedNodes) {
+      const runner = new DagNodeRunner(node.name, node, context);
+      nodes.set(node.name, runner);
+    }
+
+    for (let node of nodes.values()) {
+      let parents = node.config.parents?.map((name) => nodes.get(name)!) ?? [];
+      node.init(parents, cancel);
+    }
+
+    let leafRunners = this.info.leafNodes.map((name) => nodes.get(name)!);
+
+    const outputNode = new DagNodeRunner(
+      '__output',
+      {
+        parents: this.info.leafNodes,
+        run: ({ input }) => input,
+      },
+      context
     );
 
-    // Create a topologically sorted list of nodes
+    outputNode.init(leafRunners, cancel);
+
+    return {
+      runners: [...nodes.values()],
+      outputNode,
+      cancel,
+    };
   }
 }
 
@@ -80,101 +114,117 @@ export function compileDag(dag: Record<string, DagNode<any, any, any>>) {
 
 export interface DagRunnerOptions<CONTEXT extends object> {
   dag: DagConfiguration<CONTEXT> | CompiledDag<CONTEXT>;
-  /** Take the workflow name from this object instead of using the DAG name */
-  workflow_name?: string;
-  /** The workflow ID if it exists. */
-  workflow_id?: string;
-  /** The ID for the particular workflow run. Automatically generated if not provided. */
-  run_id?: string;
-  step_index?: number;
+  /** Options for a Chronicle LLM proxy client */
+  chronicle?: ChronicleClientOptions;
+  /** A function that can take events from the running DAG */
+  event?: WorkflowEventCallback<unknown>;
 }
 
-export class DagRunner<CONTEXT extends object, OUTPUT> extends EventEmitter {
+export class DagRunner<CONTEXT extends object, OUTPUT> {
   /** If true, halt on error. If false, continue running any portions of the DAG that were not affected by the error. */
   haltOnError = true;
   context: CONTEXT;
   runners: DagNodeRunner<CONTEXT, object, unknown>[];
+  outputNode: DagNodeRunner<CONTEXT, object, OUTPUT>;
+  cancel: EventEmitter<{ cancel: [] }>;
 
-  constructor(dag: DagConfiguration<CONTEXT> | CompiledDag<CONTEXT>, initialContext: CONTEXT) {
-    super();
-
+  constructor(dag: DagConfiguration<CONTEXT> | CompiledDag<CONTEXT>, context: CONTEXT) {
     if (!(dag instanceof CompiledDag)) {
       dag = new CompiledDag(dag);
     }
 
-    this.context = initialContext;
+    this.context = context;
+    const { runners, outputNode, cancel } = dag.buildRunners(context);
 
-    this.runners = dag.buildRunners();
-
-    // Ensure that node names are unique
+    this.runners = runners;
+    this.cancel = cancel;
+    this.outputNode = outputNode;
   }
 
   /** Run the entire DAG to completion */
-  async run(initialContext: CONTEXT): Promise<OUTPUT> {
-    // Start running all root nodes
-    for (let runner of this.runners) {
-      runner.run();
-    }
+  run(initialContext: CONTEXT): Promise<OUTPUT> {
+    return new Promise((resolve, reject) => {
+      for (let runner of this.runners) {
+        runner.on('error', (e) => {
+          this.cancel.emit('cancel');
+          reject(e);
+        });
+
+        this.outputNode.on('error', (e) => {
+          this.cancel.emit('cancel');
+          reject(e);
+        });
+      }
+
+      // TODO output Node needs a different runner that can emit a partial event if some of the
+      // nodes had errors
+      this.outputNode.on('finish', (e) => {
+        resolve(e.output);
+      });
+      this.outputNode.run();
+
+      // Start running all root nodes
+      for (let runner of this.runners) {
+        runner.run();
+      }
+    });
   }
 }
 
 export type DagNodeState = 'waiting' | 'running' | 'cancelled' | 'error' | 'finished';
 
-class DagNodeRunner<CONTEXT extends object, INPUTS extends object, OUTPUT> extends EventEmitter {
+class DagNodeRunner<CONTEXT extends object, INPUTS extends object, OUTPUT> extends EventEmitter<{
+  finish: [{ name: string; output: OUTPUT }];
+  error: [Error];
+  parentError: [];
+}> {
   name: string;
-  runner: DagRunner<CONTEXT, unknown>;
   config: DagNode<CONTEXT, INPUTS, OUTPUT>;
+  context: CONTEXT;
   state: DagNodeState;
 
   waiting: Set<string>;
-  inputs: Map<string, unknown>;
+  inputs: Partial<INPUTS>;
 
-  constructor(
-    runner: DagRunner<CONTEXT, unknown>,
-    name: string,
-    config: DagNode<CONTEXT, INPUTS, OUTPUT>,
-    parents: DagNodeRunner<CONTEXT, object, unknown>[]
-  ) {
+  constructor(name: string, config: DagNode<CONTEXT, INPUTS, OUTPUT>, context: CONTEXT) {
     super();
     this.name = name;
     this.config = config;
-    this.runner = runner;
+    this.context = context;
     this.state = 'waiting';
+    this.waiting = new Set();
+    this.inputs = {};
+  }
 
-    this.runner.on('cancel', () => {
+  init(parents: DagNodeRunner<CONTEXT, object, unknown>[], cancel: EventEmitter<{ cancel: [] }>) {
+    cancel.on('cancel', () => {
       if (this.state === 'waiting' || this.state === 'running') {
         this.state = 'cancelled';
       }
     });
 
-    this.waiting = new Set(parents.map((p) => p.name));
-    this.inputs = new Map();
+    const handleFinishedParent = (e: { name: string; output: any }) => {
+      this.waiting.delete(e.name);
+      this.inputs[e.name as keyof INPUTS] = e.output;
+      this.run();
+    };
+
+    const handleError = () => {
+      if (this.state !== 'waiting') {
+        return;
+      }
+
+      this.state = 'cancelled';
+      // Pass the error down the chain
+      this.emit('parentError');
+    };
+
     for (let parent of parents) {
-      parent.once('finish', (e) => {
-        this.waiting.delete(parent.name);
-        this.inputs.set(parent.name, e.output);
-        this.run();
-      });
+      this.waiting.add(parent.name);
 
-      parent.once('error', (e) => {
-        if (this.state !== 'waiting') {
-          return;
-        }
-
-        this.state = 'cancelled';
-        this.emit('parentError');
-      });
-
-      // We distinguish this from a normal error so that it's easier to see which node actually encountered an error and
-      // which nodes were affected by it.
-      parent.once('parentError', () => {
-        if (this.state !== 'waiting') {
-          return;
-        }
-
-        this.state = 'cancelled';
-        this.emit('parentError');
-      });
+      parent.once('finish', handleFinishedParent);
+      parent.once('error', handleError);
+      parent.once('parentError', handleError);
     }
   }
 
@@ -185,17 +235,17 @@ class DagNodeRunner<CONTEXT extends object, INPUTS extends object, OUTPUT> exten
 
     try {
       this.state = 'running';
-      // TODO this is not the correct input type
       let output = await this.config.run({
-        context: this.runner.context,
+        context: this.context,
         cancelled: () => this.state === 'cancelled',
+        // TODO this is not the correct input type
         input: this.inputs,
       });
       this.state = 'finished';
       this.emit('finish', { name: this.name, output });
     } catch (e) {
       this.state = 'error';
-      this.emit('error', e);
+      this.emit('error', e as Error);
     }
 
     // wait for all the parents to complete
