@@ -14,6 +14,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@opentelemetry/api": "^1.8.0"
+    "@opentelemetry/api": "^1.8.0",
+    "chronicle-proxy": "file:../chronicle/js-client"
   }
 }
