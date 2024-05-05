@@ -1,9 +1,22 @@
+import { Span } from '@opentelemetry/api';
+
 export type DagNodeState = 'waiting' | 'running' | 'cancelled' | 'error' | 'finished';
 
 export interface DagNodeInput<CONTEXT extends object, INPUTS extends AnyInputs> {
+  /** The context passed to the DAG by whatever started it. */
   context: CONTEXT;
+  /** Inputs from the node's parents */
   input: INPUTS;
-  cancelled: () => boolean;
+  /** The OpenTelemtry span for this execution. */
+  span: Span;
+  /** Return if this node has been cancelled due to failures elsewhere in the DAG. */
+  isCancelled: () => boolean;
+  /** Throw an NodeCancelledError if this node has been cancelled. This error
+   * is handled bu the runner specially, to avoid marking it as an actual error.
+   *
+   * This is basically a shorthand for if(isCancelled()) { return; }
+   * */
+  exitIfCancelled: () => void;
 }
 
 export type AnyInputs = Record<string, unknown>;

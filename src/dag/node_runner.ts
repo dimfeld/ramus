@@ -1,5 +1,24 @@
 import { EventEmitter } from 'events';
+import opentelemetry from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
+import { tracer } from '../tracing.js';
+import { SpanStatusCode } from '@opentelemetry/api';
+
+export class NodeCancelledError extends Error {
+  name = 'CancelledError';
+}
+
+export interface RunnerSuccessResult<T> {
+  type: 'success';
+  output: T;
+}
+
+export interface RunnerErrorResult {
+  type: 'error';
+  error: Error;
+}
+
+export type RunnerResult<DATA> = RunnerSuccessResult<DATA> | RunnerErrorResult;
 
 export class DagNodeRunner<
   CONTEXT extends object,
@@ -14,13 +33,22 @@ export class DagNodeRunner<
   config: DagNode<CONTEXT, INPUTS, OUTPUT>;
   context: CONTEXT;
   state: DagNodeState;
+  result?: RunnerResult<OUTPUT>;
+  parentSpanContext?: opentelemetry.Context;
+  spanName: string;
 
   waiting: Set<string>;
   inputs: Partial<INPUTS>;
 
-  constructor(name: string, config: DagNode<CONTEXT, INPUTS, OUTPUT>, context: CONTEXT) {
+  constructor(
+    name: string,
+    spanName: string,
+    config: DagNode<CONTEXT, INPUTS, OUTPUT>,
+    context: CONTEXT
+  ) {
     super();
     this.name = name;
+    this.spanName = spanName;
     this.config = config;
     this.context = context;
     this.state = 'waiting';
@@ -28,10 +56,21 @@ export class DagNodeRunner<
     this.inputs = {};
   }
 
+  /** `init` is called after the constructors have all been run, which is mostly a design
+   *  concession to simplify making sure that all the parent node runners have been created first.
+   **/
   init(
     parents: DagNodeRunner<CONTEXT, AnyInputs, unknown>[],
     cancel: EventEmitter<{ cancel: [] }>
   ) {
+    let parentSpan = opentelemetry.trace.getActiveSpan();
+    if (parentSpan) {
+      this.parentSpanContext = opentelemetry.trace.setSpan(
+        opentelemetry.context.active(),
+        parentSpan
+      );
+    }
+
     cancel.on('cancel', () => {
       if (this.state === 'waiting' || this.state === 'running') {
         this.state = 'cancelled';
@@ -71,31 +110,61 @@ export class DagNodeRunner<
     }
   }
 
-  async run(): Promise<void> {
+  async run(): Promise<boolean> {
     if (this.waiting.size > 0 || this.state !== 'waiting') {
-      return;
+      // Not ready to execute yet
+      return false;
     }
 
-    try {
-      this.state = 'running';
-      let output = await this.config.run({
-        context: this.context,
-        cancelled: () => this.state === 'cancelled',
-        input: this.inputs as INPUTS,
-      });
-      this.state = 'finished';
-      this.emit('finish', { name: this.name, output });
-    } catch (e) {
-      this.state = 'error';
-      this.emit('error', e as Error);
-    }
+    // TODO better span name that includes the DAG name and an optional other prefix
+    await tracer.startActiveSpan(
+      this.spanName,
+      {},
+      this.parentSpanContext ?? opentelemetry.context.active(),
+      async (span) => {
+        try {
+          this.state = 'running';
 
-    // wait for all the parents to complete
+          let output = await this.config.run({
+            context: this.context,
+            span,
+            isCancelled: () => this.state === 'cancelled',
+            exitIfCancelled: () => {
+              if (this.state === 'cancelled') {
+                throw new NodeCancelledError();
+              }
+            },
+            input: this.inputs as INPUTS,
+          });
 
-    // for a parent node:
-    //   on finish: then remove the node from the waiting list. If the list is now empty then proceed to
-    //   run
-    //   on error: emit the parentError event and exit
-    //   on parentError: emit the parentError event and exit
+          if (this.state === 'running') {
+            span.setAttribute('finishState', 'cancelled');
+
+            this.state = 'finished';
+            this.result = { type: 'success', output };
+            this.emit('finish', { name: this.name, output });
+          }
+        } catch (e) {
+          if (e instanceof NodeCancelledError) {
+            // Don't emit an error if we were cancelled
+            span.setAttribute('finishState', 'cancelled');
+          } else {
+            let err = e as Error;
+            this.state = 'error';
+            this.result = { type: 'error', error: e as Error };
+            this.emit('error', e as Error);
+
+            span.recordException(err);
+            span.setAttribute('error', err?.message ?? 'true');
+            span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
+          }
+        } finally {
+          span.end();
+        }
+      }
+    );
+
+    // true just indicates that we ran, with no bearing on success or failure
+    return true;
   }
 }

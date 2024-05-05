@@ -1,5 +1,7 @@
 import { test, expect } from 'bun:test';
-import { DagConfiguration, compileDag } from './index.js';
+
+import { compileDag } from './compile.js';
+import { DagConfiguration } from './types.js';
 
 async function noop() {}
 
@@ -54,7 +56,7 @@ test('missing parent', () => {
   expect(() => compileDag(dag)).toThrow(`Node 'two' has unknown parent 'three'`);
 });
 
-test('cycle', () => {
+test('cycle at root', () => {
   const dag: DagConfiguration<{}> = {
     one: {
       parents: ['six'],
@@ -85,4 +87,45 @@ test('cycle', () => {
   };
 
   expect(() => compileDag(dag)).toThrow('Cycle detected: one -> six -> three -> one');
+});
+
+test('cycle in the middle', () => {
+  const dag: DagConfiguration<{}> = {
+    one: {
+      run: noop,
+    },
+    two: {
+      parents: ['one', 'four'],
+      run: noop,
+    },
+    three: {
+      parents: ['one', 'two'],
+      run: noop,
+    },
+    four: {
+      parents: ['three'],
+      run: noop,
+    },
+    five: {
+      parents: ['four'],
+      run: noop,
+    },
+  };
+
+  expect(() => compileDag(dag)).toThrow('Cycle detected: two -> four -> three -> two');
+});
+
+test('two-node cycle', () => {
+  const dag: DagConfiguration<{}> = {
+    one: {
+      parents: ['two'],
+      run: noop,
+    },
+    two: {
+      parents: ['one'],
+      run: noop,
+    },
+  };
+
+  expect(() => compileDag(dag)).toThrow('Cycle detected: one -> two -> one');
 });
