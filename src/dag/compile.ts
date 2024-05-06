@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { AnyInputs, DagConfiguration, DagNode } from './types.js';
+import { AnyInputs, Dag, DagConfiguration, DagNode } from './types.js';
 import { DagNodeRunner } from './node_runner.js';
 
 export function compileDag(dag: Record<string, DagNode<any, any, any>>) {
@@ -43,15 +43,21 @@ interface NamedDagNode<CONTEXT extends object, INPUTS extends AnyInputs, OUTPUT>
 }
 
 export class CompiledDag<CONTEXT extends object, OUTPUT> {
+  config: Dag<CONTEXT>;
   info: ReturnType<typeof compileDag>;
 
   namedNodes: NamedDagNode<CONTEXT, AnyInputs, unknown>[];
-  constructor(dag: DagConfiguration<CONTEXT>) {
-    this.info = compileDag(dag);
-    this.namedNodes = Object.entries(dag).map(([name, node]) => ({
+  constructor(dag: Dag<CONTEXT>) {
+    this.config = dag;
+    this.info = compileDag(dag.nodes);
+    this.namedNodes = Object.entries(dag.nodes).map(([name, node]) => ({
       ...node,
       name,
     }));
+
+    if (!this.namedNodes.length) {
+      throw new Error('DAG has no nodes');
+    }
   }
 
   buildRunners(context: CONTEXT) {
@@ -60,7 +66,12 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
     let nodes = new Map<string, DagNodeRunner<CONTEXT, AnyInputs, unknown>>();
 
     for (let node of this.namedNodes) {
-      const runner = new DagNodeRunner(node.name, node, context);
+      const runner = new DagNodeRunner(
+        node.name,
+        `DAG ${this.config.name} Node ${node.name}`,
+        node,
+        context
+      );
       nodes.set(node.name, runner);
     }
 
@@ -73,8 +84,10 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
 
     const outputNode = new DagNodeRunner<CONTEXT, AnyInputs, OUTPUT>(
       '__output',
+      `DAG ${this.config.name} Output Collector`,
       {
         parents: this.info.leafNodes,
+        tolerateParentErrors: true,
         run: ({ input }) => {
           if (input) {
             let keys = Object.keys(input);

@@ -1,9 +1,10 @@
 import { EventEmitter } from 'events';
 import { ChronicleClient, ChronicleClientOptions, createChronicleClient } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
-import type { AnyInputs, DagConfiguration, DagNode } from './types.js';
+import type { AnyInputs, Dag, DagConfiguration, DagNode } from './types.js';
 import { CompiledDag } from './compile.js';
 import { DagNodeRunner } from './node_runner.js';
+import { runInSpan, tracer } from '../tracing.js';
 
 export interface DagRunnerOptions<CONTEXT extends object, OUTPUT = unknown> {
   dag: DagConfiguration<CONTEXT> | CompiledDag<CONTEXT, OUTPUT>;
@@ -14,14 +15,14 @@ export interface DagRunnerOptions<CONTEXT extends object, OUTPUT = unknown> {
 }
 
 export class DagRunner<CONTEXT extends object, OUTPUT> {
-  /** If true, halt on error. If false, continue running any portions of the DAG that were not affected by the error. */
-  haltOnError = true;
+  name: string;
   context: CONTEXT;
   runners: DagNodeRunner<CONTEXT, AnyInputs, unknown>[];
   outputNode: DagNodeRunner<CONTEXT, AnyInputs, OUTPUT>;
+  tolerateFailures: boolean;
   cancel: EventEmitter<{ cancel: [] }>;
 
-  constructor(dag: DagConfiguration<CONTEXT> | CompiledDag<CONTEXT, OUTPUT>, context: CONTEXT) {
+  constructor(dag: Dag<CONTEXT> | CompiledDag<CONTEXT, OUTPUT>, context: CONTEXT) {
     if (!(dag instanceof CompiledDag)) {
       dag = new CompiledDag(dag);
     }
@@ -29,6 +30,8 @@ export class DagRunner<CONTEXT extends object, OUTPUT> {
     this.context = context;
     const { runners, outputNode, cancel } = dag.buildRunners(context);
 
+    this.name = dag.config.name;
+    this.tolerateFailures = dag.config.tolerateFailures ?? false;
     this.runners = runners;
     this.cancel = cancel;
     this.outputNode = outputNode;
@@ -37,29 +40,40 @@ export class DagRunner<CONTEXT extends object, OUTPUT> {
   /** Run the entire DAG to completion */
   run(): Promise<OUTPUT> {
     return new Promise((resolve, reject) => {
-      for (let runner of this.runners) {
-        runner.on('error', (e) => {
-          this.cancel.emit('cancel');
-          reject(e);
-        });
+      runInSpan(`DAG ${this.name}`, async () => {
+        if (!this.tolerateFailures) {
+          for (let runner of this.runners) {
+            runner.on('error', (e) => {
+              this.cancel.emit('cancel');
+              reject(e);
+            });
+          }
+        }
 
         this.outputNode.on('error', (e) => {
           this.cancel.emit('cancel');
           reject(e);
         });
-      }
 
-      // TODO output Node needs a different runner that can emit a partial event if some of the
-      // nodes had errors
-      this.outputNode.on('finish', (e) => {
-        resolve(e.output);
+        this.outputNode.on('finish', (e) => {
+          resolve(e.output);
+        });
+
+        // Start running all root nodes
+        for (let runner of this.runners) {
+          if (!runner.config.parents?.length) {
+            runner.run();
+          }
+        }
       });
-      this.outputNode.run();
-
-      // Start running all root nodes
-      for (let runner of this.runners) {
-        runner.run();
-      }
     });
   }
+}
+
+/** Create a run a DAG in one statement. This is equivalent to `new DagRunner(dag, context).run()` */
+export async function runDag<CONTEXT extends object, OUTPUT>(
+  dag: Dag<CONTEXT> | CompiledDag<CONTEXT, OUTPUT>,
+  context: CONTEXT
+) {
+  return await new DagRunner(dag, context).run();
 }

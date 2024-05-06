@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
 
-import { compileDag } from './compile.js';
+import { CompiledDag, compileDag } from './compile.js';
 import { DagConfiguration } from './types.js';
 
 async function noop() {}
@@ -48,7 +48,7 @@ test('missing parent', () => {
       run: noop,
     },
     two: {
-      parents: ['three'],
+      parents: ['one', 'three'],
       run: noop,
     },
   };
@@ -128,4 +128,8 @@ test('two-node cycle', () => {
   };
 
   expect(() => compileDag(dag)).toThrow('Cycle detected: one -> two -> one');
+});
+
+test('no nodes', () => {
+  expect(() => new CompiledDag({ name: 'test', nodes: {} })).toThrow('DAG has no nodes');
 });

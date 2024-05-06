@@ -31,6 +31,9 @@ export interface DagNode<CONTEXT extends object, INPUTS extends AnyInputs, OUTPU
 export interface Dag<CONTEXT extends object> {
   name: string;
   description?: string;
+  /** If true, keep running whatever we can when a node fails.
+  When false or omitted, the entire DAG will end with an error if any node fails. */
+  tolerateFailures?: boolean;
   nodes: DagConfiguration<CONTEXT>;
 }
 

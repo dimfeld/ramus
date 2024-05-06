@@ -116,13 +116,15 @@ export class DagNodeRunner<
       return false;
     }
 
-    // TODO better span name that includes the DAG name and an optional other prefix
     await tracer.startActiveSpan(
       this.spanName,
       {},
       this.parentSpanContext ?? opentelemetry.context.active(),
       async (span) => {
         try {
+          if (this.config.parents) {
+            span.setAttribute('dag.node.parents', this.config.parents.join(', '));
+          }
           this.state = 'running';
 
           let output = await this.config.run({

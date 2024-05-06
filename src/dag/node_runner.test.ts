@@ -231,10 +231,10 @@ test('tolerate parent errors, when all parents error', async () => {
   expect(finished()).toBe(true);
 });
 
-test('exitIfCancelled', async () => {});
+test.todo('exitIfCancelled', async () => {});
 
-test('cancel before run', async () => {});
+test.todo('cancel before run', async () => {});
 
-test('cancel during run', async () => {});
+test.todo('cancel during run', async () => {});
 
-test('cancel after finish', async () => {});
+test.todo('cancel after finish', async () => {});
