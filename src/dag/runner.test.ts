@@ -39,7 +39,7 @@ test('simple DAG', async () => {
     nodes,
   };
 
-  let result = await runDag(dag, { ctxValue: 5 });
+  let result = await runDag({ dag, context: { ctxValue: 5 } });
   // 2 * ((5 + 1) + 1)
   expect(result).toEqual(14);
 });
@@ -58,7 +58,7 @@ test('single node', async () => {
     nodes,
   };
 
-  let result = await runDag(dag, { ctxValue: 5 });
+  let result = await runDag({ dag, context: { ctxValue: 5 } });
   // 2 * ((5 + 1) + 1)
   expect(result).toEqual(6);
 });
@@ -71,7 +71,7 @@ test('no nodes', async () => {
     nodes,
   };
 
-  await expect(runDag(dag, { ctxValue: 5 })).rejects.toThrowError('DAG has no nodes');
+  await expect(runDag({ dag, context: { ctxValue: 5 } })).rejects.toThrowError('DAG has no nodes');
 });
 
 test('multiple root nodes', async () => {
@@ -99,7 +99,7 @@ test('multiple root nodes', async () => {
     nodes,
   };
 
-  let result = await runDag(dag, { ctxValue: 5 });
+  let result = await runDag({ dag, context: { ctxValue: 5 } });
   expect(result).toEqual(13);
 });
 
@@ -129,7 +129,7 @@ test('multiple leaf nodes', async () => {
     nodes,
   };
 
-  let result = await runDag(dag, { ctxValue: 5 });
+  let result = await runDag({ dag, context: { ctxValue: 5 } });
   expect(result).toEqual({
     outputOne: 7,
     outputTwo: 8,
@@ -163,7 +163,7 @@ test('node error when tolerating failures', async () => {
     tolerateFailures: true,
   };
 
-  let result = await runDag(dag, { ctxValue: 5 });
+  let result = await runDag({ dag, context: { ctxValue: 5 } });
   expect(result).toEqual({
     outputOne: undefined,
     outputTwo: 8,
@@ -196,5 +196,5 @@ test('node error when not tolerating failures', async () => {
     nodes,
   };
 
-  await expect(runDag(dag, { ctxValue: 5 })).rejects.toThrowError('failure');
+  await expect(runDag({ dag, context: { ctxValue: 5 } })).rejects.toThrowError('failure');
 });

@@ -1,13 +1,16 @@
 import { Span } from '@opentelemetry/api';
+import { ChronicleClientOptions } from 'chronicle-proxy';
+import type { WorkflowEventCallback } from '../events.js';
 
 export type DagNodeState = 'waiting' | 'running' | 'cancelled' | 'error' | 'finished';
 
+/** The structure passed to a DAG node when it executes. */
 export interface DagNodeInput<CONTEXT extends object, INPUTS extends AnyInputs> {
   /** The context passed to the DAG by whatever started it. */
   context: CONTEXT;
   /** Inputs from the node's parents */
   input: INPUTS;
-  /** The OpenTelemtry span for this execution. */
+  /** The OpenTelemetry span for this execution. */
   span: Span;
   /** Return if this node has been cancelled due to failures elsewhere in the DAG. */
   isCancelled: () => boolean;
@@ -17,6 +20,13 @@ export interface DagNodeInput<CONTEXT extends object, INPUTS extends AnyInputs> 
    * This is basically a shorthand for if(isCancelled()) { return; }
    * */
   exitIfCancelled: () => void;
+  /** If a ChronicleClientOptions was supplied to the DAG, this is that object, cloned
+   * and modified to set the step name to this DAG node's name. */
+  chronicleOptions?: ChronicleClientOptions;
+  /** An event callback that may have been supplied by the caller. If a callback was
+   * not supplied, this will be a no-op function so you may call it without checking
+   */
+  eventCb: WorkflowEventCallback<unknown>;
 }
 
 export type AnyInputs = Record<string, unknown>;

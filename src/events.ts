@@ -1,11 +1,10 @@
 import type { ChronicleClientOptions, ChronicleRequestMetadata } from 'chronicle-proxy';
 
-export interface WorkflowEvent<DATA, META extends object = {}> {
+// TODO better event types
+export interface WorkflowEvent<DATA> {
   type: string;
   data: DATA;
   meta: ChronicleRequestMetadata;
 }
 
-export type WorkflowEventCallback<DATA, META extends object = {}> = (
-  event: WorkflowEvent<DATA, META>
-) => void;
+export type WorkflowEventCallback<DATA> = (event: WorkflowEvent<DATA>) => any;

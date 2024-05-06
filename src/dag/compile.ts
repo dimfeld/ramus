@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import { AnyInputs, Dag, DagConfiguration, DagNode } from './types.js';
 import { DagNodeRunner } from './node_runner.js';
+import { ChronicleClientOptions } from 'chronicle-proxy';
+import { WorkflowEventCallback } from '../events.js';
 
 export function compileDag(dag: Record<string, DagNode<any, any, any>>) {
   // Start with all nodes potentially being leaf nodes and then exclude them as we go.
@@ -42,6 +44,12 @@ interface NamedDagNode<CONTEXT extends object, INPUTS extends AnyInputs, OUTPUT>
   name: string;
 }
 
+export interface BuildRunnerOptions<CONTEXT extends object> {
+  context: CONTEXT;
+  chronicle?: ChronicleClientOptions;
+  eventCb: WorkflowEventCallback<unknown>;
+}
+
 export class CompiledDag<CONTEXT extends object, OUTPUT> {
   config: Dag<CONTEXT>;
   info: ReturnType<typeof compileDag>;
@@ -60,18 +68,20 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
     }
   }
 
-  buildRunners(context: CONTEXT) {
+  buildRunners({ context, chronicle, eventCb }: BuildRunnerOptions<CONTEXT>) {
     const cancel = new EventEmitter<{ cancel: [] }>();
 
     let nodes = new Map<string, DagNodeRunner<CONTEXT, AnyInputs, unknown>>();
 
     for (let node of this.namedNodes) {
-      const runner = new DagNodeRunner(
-        node.name,
-        `DAG ${this.config.name} Node ${node.name}`,
-        node,
-        context
-      );
+      const runner = new DagNodeRunner({
+        name: node.name,
+        spanName: `DAG ${this.config.name} Node ${node.name}`,
+        config: node,
+        context,
+        chronicle,
+        eventCb,
+      });
       nodes.set(node.name, runner);
     }
 
@@ -82,10 +92,10 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
 
     let leafRunners = this.info.leafNodes.map((name) => nodes.get(name)!);
 
-    const outputNode = new DagNodeRunner<CONTEXT, AnyInputs, OUTPUT>(
-      '__output',
-      `DAG ${this.config.name} Output Collector`,
-      {
+    const outputNode = new DagNodeRunner<CONTEXT, AnyInputs, OUTPUT>({
+      name: '__output',
+      spanName: `DAG ${this.config.name} Output Collector`,
+      config: {
         parents: this.info.leafNodes,
         tolerateParentErrors: true,
         run: ({ input }) => {
@@ -99,8 +109,10 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
           return input as OUTPUT;
         },
       },
-      context
-    );
+      context,
+      chronicle,
+      eventCb,
+    });
 
     outputNode.init(leafRunners, cancel);
 

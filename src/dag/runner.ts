@@ -1,18 +1,21 @@
 import { EventEmitter } from 'events';
-import { ChronicleClient, ChronicleClientOptions, createChronicleClient } from 'chronicle-proxy';
+import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
-import type { AnyInputs, Dag, DagConfiguration, DagNode } from './types.js';
+import type { AnyInputs, Dag } from './types.js';
 import { CompiledDag } from './compile.js';
 import { DagNodeRunner } from './node_runner.js';
-import { runInSpan, tracer } from '../tracing.js';
+import { runInSpan } from '../tracing.js';
 
 export interface DagRunnerOptions<CONTEXT extends object, OUTPUT = unknown> {
-  dag: DagConfiguration<CONTEXT> | CompiledDag<CONTEXT, OUTPUT>;
+  dag: Dag<CONTEXT> | CompiledDag<CONTEXT, OUTPUT>;
+  context: CONTEXT;
   /** Options for a Chronicle LLM proxy client */
   chronicle?: ChronicleClientOptions;
   /** A function that can take events from the running DAG */
-  event?: WorkflowEventCallback<unknown>;
+  eventCb?: WorkflowEventCallback<unknown>;
 }
+
+function noop() {}
 
 export class DagRunner<CONTEXT extends object, OUTPUT> {
   name: string;
@@ -20,15 +23,26 @@ export class DagRunner<CONTEXT extends object, OUTPUT> {
   runners: DagNodeRunner<CONTEXT, AnyInputs, unknown>[];
   outputNode: DagNodeRunner<CONTEXT, AnyInputs, OUTPUT>;
   tolerateFailures: boolean;
+  chronicleOptions?: ChronicleClientOptions;
+  eventCb: WorkflowEventCallback<unknown>;
+
   cancel: EventEmitter<{ cancel: [] }>;
 
-  constructor(dag: Dag<CONTEXT> | CompiledDag<CONTEXT, OUTPUT>, context: CONTEXT) {
+  constructor({ dag, context, chronicle, eventCb }: DagRunnerOptions<CONTEXT, OUTPUT>) {
     if (!(dag instanceof CompiledDag)) {
       dag = new CompiledDag(dag);
     }
 
     this.context = context;
-    const { runners, outputNode, cancel } = dag.buildRunners(context);
+
+    this.chronicleOptions = chronicle;
+    this.eventCb = eventCb ?? noop;
+
+    const { runners, outputNode, cancel } = dag.buildRunners({
+      context,
+      chronicle,
+      eventCb: this.eventCb,
+    });
 
     this.name = dag.config.name;
     this.tolerateFailures = dag.config.tolerateFailures ?? false;
@@ -72,8 +86,7 @@ export class DagRunner<CONTEXT extends object, OUTPUT> {
 
 /** Create a run a DAG in one statement. This is equivalent to `new DagRunner(dag, context).run()` */
 export async function runDag<CONTEXT extends object, OUTPUT>(
-  dag: Dag<CONTEXT> | CompiledDag<CONTEXT, OUTPUT>,
-  context: CONTEXT
+  options: DagRunnerOptions<CONTEXT, OUTPUT>
 ) {
-  return await new DagRunner(dag, context).run();
+  return await new DagRunner(options).run();
 }

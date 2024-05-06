@@ -3,6 +3,8 @@ import opentelemetry from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
 import { tracer } from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
+import { ChronicleClientOptions } from 'chronicle-proxy';
+import { WorkflowEventCallback } from '../events.js';
 
 export class NodeCancelledError extends Error {
   name = 'CancelledError';
@@ -20,6 +22,15 @@ export interface RunnerErrorResult {
 
 export type RunnerResult<DATA> = RunnerSuccessResult<DATA> | RunnerErrorResult;
 
+export interface DagNodeRunnerOptions<CONTEXT extends object, INPUTS extends AnyInputs, OUTPUT> {
+  name: string;
+  spanName: string;
+  config: DagNode<CONTEXT, INPUTS, OUTPUT>;
+  context: CONTEXT;
+  chronicle?: ChronicleClientOptions;
+  eventCb: WorkflowEventCallback<unknown>;
+}
+
 export class DagNodeRunner<
   CONTEXT extends object,
   INPUTS extends AnyInputs,
@@ -36,20 +47,26 @@ export class DagNodeRunner<
   result?: RunnerResult<OUTPUT>;
   parentSpanContext?: opentelemetry.Context;
   spanName: string;
+  chronicleOptions?: ChronicleClientOptions;
+  eventCb: WorkflowEventCallback<unknown>;
 
   waiting: Set<string>;
   inputs: Partial<INPUTS>;
 
-  constructor(
-    name: string,
-    spanName: string,
-    config: DagNode<CONTEXT, INPUTS, OUTPUT>,
-    context: CONTEXT
-  ) {
+  constructor({
+    name,
+    spanName,
+    config,
+    context,
+    chronicle,
+    eventCb,
+  }: DagNodeRunnerOptions<CONTEXT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
     this.spanName = spanName;
     this.config = config;
+    this.chronicleOptions = chronicle;
+    this.eventCb = eventCb;
     this.context = context;
     this.state = 'waiting';
     this.waiting = new Set();
@@ -116,6 +133,7 @@ export class DagNodeRunner<
       return false;
     }
 
+    this.state = 'running';
     await tracer.startActiveSpan(
       this.spanName,
       {},
@@ -125,23 +143,36 @@ export class DagNodeRunner<
           if (this.config.parents) {
             span.setAttribute('dag.node.parents', this.config.parents.join(', '));
           }
-          this.state = 'running';
+
+          let chronicleOptions: ChronicleClientOptions | undefined;
+          if (this.chronicleOptions) {
+            chronicleOptions = {
+              ...this.chronicleOptions,
+              defaults: {
+                ...this.chronicleOptions?.defaults,
+                metadata: {
+                  ...this.chronicleOptions?.defaults?.metadata,
+                  step: this.spanName,
+                },
+              },
+            };
+          }
 
           let output = await this.config.run({
+            input: this.inputs as INPUTS,
             context: this.context,
             span,
+            chronicleOptions,
+            eventCb: this.eventCb,
             isCancelled: () => this.state === 'cancelled',
             exitIfCancelled: () => {
               if (this.state === 'cancelled') {
                 throw new NodeCancelledError();
               }
             },
-            input: this.inputs as INPUTS,
           });
 
-          if (this.state === 'running') {
-            span.setAttribute('finishState', 'cancelled');
-
+          if (this.state !== 'cancelled') {
             this.state = 'finished';
             this.result = { type: 'success', output };
             this.emit('finish', { name: this.name, output });
@@ -149,7 +180,6 @@ export class DagNodeRunner<
         } catch (e) {
           if (e instanceof NodeCancelledError) {
             // Don't emit an error if we were cancelled
-            span.setAttribute('finishState', 'cancelled');
           } else {
             let err = e as Error;
             this.state = 'error';
@@ -161,6 +191,7 @@ export class DagNodeRunner<
             span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
           }
         } finally {
+          span.setAttribute('finishState', this.state);
           span.end();
         }
       }

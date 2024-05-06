@@ -29,10 +29,10 @@ function outputCatcher(runner: DagNodeRunner<any, any, any>) {
 
 /** A mock runner used as inputs to the runner under test */
 function mockRunner(name: string, output: any, fail = false) {
-  const runner = new DagNodeRunner(
-    name,
-    name,
-    {
+  const runner = new DagNodeRunner({
+    name: name,
+    spanName: name,
+    config: {
       run: () => {
         if (fail) {
           throw new Error('Parent node failed');
@@ -40,19 +40,21 @@ function mockRunner(name: string, output: any, fail = false) {
         return output;
       },
     },
-    {} as any
-  );
+    context: {} as any,
+    eventCb: () => {},
+  });
   runner.init([], new EventEmitter());
   return runner;
 }
 
 test('no parents', async () => {
-  let runner = new DagNodeRunner(
-    'node',
-    'node',
-    { run: ({ context }) => context.value + 1 },
-    { value: 1 }
-  );
+  let runner = new DagNodeRunner({
+    name: 'node',
+    spanName: 'node',
+    config: { run: ({ context }) => context.value + 1 },
+    context: { value: 1 },
+    eventCb: () => {},
+  });
   const { promise, finished } = outputCatcher(runner);
 
   runner.init([], new EventEmitter());
@@ -72,12 +74,13 @@ test('no parents', async () => {
 
 test('single parent', async () => {
   let parent = mockRunner('parent', 2);
-  let runner = new DagNodeRunner(
-    'node',
-    'node',
-    { parents: ['parent'], run: ({ context, input }) => input.parent + context.value + 1 },
-    { value: 1 }
-  );
+  let runner = new DagNodeRunner({
+    name: 'node',
+    spanName: 'node',
+    config: { parents: ['parent'], run: ({ context, input }) => input.parent + context.value + 1 },
+    context: { value: 1 },
+    eventCb: () => {},
+  });
 
   const { promise, finished } = outputCatcher(runner);
 
@@ -102,16 +105,17 @@ test('single parent', async () => {
 
 test('multiple parents', async () => {
   const parents = [1, 2, 3, 4].map((i) => mockRunner(`parent${i}`, i));
-  let runner = new DagNodeRunner(
-    'node',
-    'node',
-    {
+  let runner = new DagNodeRunner({
+    name: 'node',
+    spanName: 'node',
+    config: {
       parents: parents.map((p) => p.name),
       run: async ({ context, input }) =>
         input.parent1 + input.parent2 + input.parent3 + input.parent4 + context.value,
     },
-    { value: 10 }
-  );
+    context: { value: 10 },
+    eventCb: () => {},
+  });
 
   const { promise, finished } = outputCatcher(runner);
 
@@ -137,15 +141,16 @@ test('parent failed when errors are not tolerated', async () => {
   let successParent = mockRunner('successParent', 1);
   let failParent = mockRunner('failParent', 1, true);
 
-  let runner = new DagNodeRunner(
-    'node',
-    'node',
-    {
+  let runner = new DagNodeRunner({
+    name: 'node',
+    spanName: 'node',
+    config: {
       parents: ['successParent', 'failParent'],
       run: async () => 1,
     },
-    { value: 10 }
-  );
+    context: { value: 10 },
+    eventCb: () => {},
+  });
 
   let sawParentError = false;
   runner.on('parentError', () => {
@@ -172,18 +177,19 @@ test('tolerate parent errors', async () => {
   let successParent = mockRunner('successParent', 5);
   let failParent = mockRunner('failParent', 8, true);
 
-  let runner = new DagNodeRunner(
-    'node',
-    'node',
-    {
+  let runner = new DagNodeRunner({
+    name: 'node',
+    spanName: 'node',
+    config: {
       parents: ['successParent', 'failParent'],
       tolerateParentErrors: true,
       run: async ({ input }) => {
         return input.successParent + (input.failParent ?? 0) + 1;
       },
     },
-    { value: 10 }
-  );
+    context: { value: 10 },
+    eventCb: () => {},
+  });
 
   let { promise, finished } = outputCatcher(runner);
 
@@ -203,18 +209,19 @@ test('tolerate parent errors, when all parents error', async () => {
   let failParent1 = mockRunner('failParent1', 5, true);
   let failParent2 = mockRunner('failParent2', 8, true);
 
-  let runner = new DagNodeRunner(
-    'node',
-    'node',
-    {
+  let runner = new DagNodeRunner({
+    name: 'node',
+    spanName: 'node',
+    config: {
       parents: ['failParent1', 'failParent2'],
       tolerateParentErrors: true,
       run: async ({ input }) => {
         return (input.failParent1 ?? 0) + (input.failParent2 ?? 0) + 2;
       },
     },
-    { value: 10 }
-  );
+    context: { value: 10 },
+    eventCb: () => {},
+  });
 
   let { promise, finished } = outputCatcher(runner);
 
