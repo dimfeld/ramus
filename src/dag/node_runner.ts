@@ -5,6 +5,7 @@ import { tracer } from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
+import { runDag } from './runner.js';
 
 export class NodeCancelledError extends Error {
   name = 'CancelledError';
@@ -24,7 +25,7 @@ export type RunnerResult<DATA> = RunnerSuccessResult<DATA> | RunnerErrorResult;
 
 export interface DagNodeRunnerOptions<CONTEXT extends object, INPUTS extends AnyInputs, OUTPUT> {
   name: string;
-  spanName: string;
+  dagName: string;
   config: DagNode<CONTEXT, INPUTS, OUTPUT>;
   context: CONTEXT;
   chronicle?: ChronicleClientOptions;
@@ -41,12 +42,12 @@ export class DagNodeRunner<
   parentError: [];
 }> {
   name: string;
+  dagName: string;
   config: DagNode<CONTEXT, INPUTS, OUTPUT>;
   context: CONTEXT;
   state: DagNodeState;
   result?: RunnerResult<OUTPUT>;
   parentSpanContext?: opentelemetry.Context;
-  spanName: string;
   chronicleOptions?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback<unknown>;
 
@@ -55,7 +56,7 @@ export class DagNodeRunner<
 
   constructor({
     name,
-    spanName,
+    dagName,
     config,
     context,
     chronicle,
@@ -63,7 +64,7 @@ export class DagNodeRunner<
   }: DagNodeRunnerOptions<CONTEXT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
-    this.spanName = spanName;
+    this.dagName = dagName;
     this.config = config;
     this.chronicleOptions = chronicle;
     this.eventCb = eventCb;
@@ -134,8 +135,9 @@ export class DagNodeRunner<
     }
 
     this.state = 'running';
+    let step = `${this.dagName}:${this.name}`;
     await tracer.startActiveSpan(
-      this.spanName,
+      step,
       {},
       this.parentSpanContext ?? opentelemetry.context.active(),
       async (span) => {
@@ -152,7 +154,7 @@ export class DagNodeRunner<
                 ...this.chronicleOptions?.defaults,
                 metadata: {
                   ...this.chronicleOptions?.defaults?.metadata,
-                  step: this.spanName,
+                  step,
                 },
               },
             };
@@ -163,13 +165,22 @@ export class DagNodeRunner<
             context: this.context,
             span,
             chronicleOptions,
-            eventCb: this.eventCb,
+            event: (type, data) =>
+              this.eventCb({
+                type,
+                data,
+                meta: chronicleOptions?.defaults?.metadata,
+                source: this.dagName,
+                sourceNode: this.name,
+              }),
             isCancelled: () => this.state === 'cancelled',
             exitIfCancelled: () => {
               if (this.state === 'cancelled') {
                 throw new NodeCancelledError();
               }
             },
+            runDag: (options) =>
+              runDag({ ...options, eventCb: this.eventCb, chronicle: chronicleOptions }),
           });
 
           if (this.state !== 'cancelled') {

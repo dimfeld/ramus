@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { AnyInputs, Dag, DagConfiguration, DagNode } from './types.js';
+import { AnyInputs, Dag, DagNode } from './types.js';
 import { DagNodeRunner } from './node_runner.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
@@ -76,7 +76,7 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
     for (let node of this.namedNodes) {
       const runner = new DagNodeRunner({
         name: node.name,
-        spanName: `DAG ${this.config.name} Node ${node.name}`,
+        dagName: this.config.name,
         config: node,
         context,
         chronicle,
@@ -94,7 +94,7 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
 
     const outputNode = new DagNodeRunner<CONTEXT, AnyInputs, OUTPUT>({
       name: '__output',
-      spanName: `DAG ${this.config.name} Output Collector`,
+      dagName: this.config.name,
       config: {
         parents: this.info.leafNodes,
         tolerateParentErrors: true,

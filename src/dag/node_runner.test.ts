@@ -31,7 +31,7 @@ function outputCatcher(runner: DagNodeRunner<any, any, any>) {
 function mockRunner(name: string, output: any, fail = false) {
   const runner = new DagNodeRunner({
     name: name,
-    spanName: name,
+    dagName: name,
     config: {
       run: () => {
         if (fail) {
@@ -50,7 +50,7 @@ function mockRunner(name: string, output: any, fail = false) {
 test('no parents', async () => {
   let runner = new DagNodeRunner({
     name: 'node',
-    spanName: 'node',
+    dagName: 'node',
     config: { run: ({ context }) => context.value + 1 },
     context: { value: 1 },
     eventCb: () => {},
@@ -76,7 +76,7 @@ test('single parent', async () => {
   let parent = mockRunner('parent', 2);
   let runner = new DagNodeRunner({
     name: 'node',
-    spanName: 'node',
+    dagName: 'node',
     config: { parents: ['parent'], run: ({ context, input }) => input.parent + context.value + 1 },
     context: { value: 1 },
     eventCb: () => {},
@@ -107,7 +107,7 @@ test('multiple parents', async () => {
   const parents = [1, 2, 3, 4].map((i) => mockRunner(`parent${i}`, i));
   let runner = new DagNodeRunner({
     name: 'node',
-    spanName: 'node',
+    dagName: 'node',
     config: {
       parents: parents.map((p) => p.name),
       run: async ({ context, input }) =>
@@ -143,7 +143,7 @@ test('parent failed when errors are not tolerated', async () => {
 
   let runner = new DagNodeRunner({
     name: 'node',
-    spanName: 'node',
+    dagName: 'node',
     config: {
       parents: ['successParent', 'failParent'],
       run: async () => 1,
@@ -179,7 +179,7 @@ test('tolerate parent errors', async () => {
 
   let runner = new DagNodeRunner({
     name: 'node',
-    spanName: 'node',
+    dagName: 'node',
     config: {
       parents: ['successParent', 'failParent'],
       tolerateParentErrors: true,
@@ -211,7 +211,7 @@ test('tolerate parent errors, when all parents error', async () => {
 
   let runner = new DagNodeRunner({
     name: 'node',
-    spanName: 'node',
+    dagName: 'node',
     config: {
       parents: ['failParent1', 'failParent2'],
       tolerateParentErrors: true,
