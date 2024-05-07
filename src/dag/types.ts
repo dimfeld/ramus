@@ -26,8 +26,10 @@ export interface DagNodeInput<CONTEXT extends object, INPUTS extends AnyInputs> 
 
   /** Send an event to the system that created the DAG. This can be used for status updates while
    * the DAG is running.
+   *
+   * The event will be recorded on the active Span unless `spanEvent` is false.
    */
-  event: (type: string, data: unknown) => void;
+  event: (type: string, data: unknown, spanEvent?: boolean) => void;
 
   /** Run another DAG as part of this execution. */
   runDag<CONTEXT extends object, OUTPUT>(

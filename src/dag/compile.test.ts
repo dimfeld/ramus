@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
 
-import { CompiledDag, compileDag } from './compile.js';
+import { CompiledDag, analyzeDag } from './compile.js';
 import { DagConfiguration } from './types.js';
 
 async function noop() {}
@@ -34,7 +34,7 @@ test('valid DAG', () => {
     },
   };
 
-  const { leafNodes, rootNodes } = compileDag(dag);
+  const { leafNodes, rootNodes } = analyzeDag(dag);
   rootNodes.sort();
   leafNodes.sort();
 
@@ -53,7 +53,7 @@ test('missing parent', () => {
     },
   };
 
-  expect(() => compileDag(dag)).toThrow(`Node 'two' has unknown parent 'three'`);
+  expect(() => analyzeDag(dag)).toThrow(`Node 'two' has unknown parent 'three'`);
 });
 
 test('cycle at root', () => {
@@ -86,7 +86,7 @@ test('cycle at root', () => {
     },
   };
 
-  expect(() => compileDag(dag)).toThrow('Cycle detected: one -> six -> three -> one');
+  expect(() => analyzeDag(dag)).toThrow('Cycle detected: one -> six -> three -> one');
 });
 
 test('cycle in the middle', () => {
@@ -112,7 +112,7 @@ test('cycle in the middle', () => {
     },
   };
 
-  expect(() => compileDag(dag)).toThrow('Cycle detected: two -> four -> three -> two');
+  expect(() => analyzeDag(dag)).toThrow('Cycle detected: two -> four -> three -> two');
 });
 
 test('two-node cycle', () => {
@@ -127,7 +127,7 @@ test('two-node cycle', () => {
     },
   };
 
-  expect(() => compileDag(dag)).toThrow('Cycle detected: one -> two -> one');
+  expect(() => analyzeDag(dag)).toThrow('Cycle detected: one -> two -> one');
 });
 
 test('no nodes', () => {

@@ -3,6 +3,24 @@
   "description": "Workflow engine and agent framework",
   "module": "dist/index.js",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "default": "./dist/tools/index.js"
+    },
+    "./tools/*": {
+      "types": "./dist/tools/*.d.ts",
+      "default": "./dist/tools/*.js"
+    }
+  },
+  "files": [
+    "package.json",
+    "dist"
+  ],
   "scripts": {
     "build": "rm -rf dist && tsc",
     "dev": "tsc --watch"
@@ -15,6 +33,7 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.8.0",
-    "chronicle-proxy": "file:../chronicle/js-client"
+    "chronicle-proxy": "file:../chronicle/js-client",
+    "ky": "^1.2.4"
   }
 }

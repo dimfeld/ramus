@@ -4,7 +4,8 @@ import { DagNodeRunner } from './node_runner.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
 
-export function compileDag(dag: Record<string, DagNode<any, any, any>>) {
+/** @internal Analyze some parts of the DAG. This is only exported for testing and isn't useful on its own. */
+export function analyzeDag(dag: Record<string, DagNode<any, any, any>>) {
   // Start with all nodes potentially being leaf nodes and then exclude them as we go.
   const leafNodes = new Set<string>(Object.keys(dag));
 
@@ -52,12 +53,12 @@ export interface BuildRunnerOptions<CONTEXT extends object> {
 
 export class CompiledDag<CONTEXT extends object, OUTPUT> {
   config: Dag<CONTEXT>;
-  info: ReturnType<typeof compileDag>;
+  info: ReturnType<typeof analyzeDag>;
 
   namedNodes: NamedDagNode<CONTEXT, AnyInputs, unknown>[];
   constructor(dag: Dag<CONTEXT>) {
     this.config = dag;
-    this.info = compileDag(dag.nodes);
+    this.info = analyzeDag(dag.nodes);
     this.namedNodes = Object.entries(dag.nodes).map(([name, node]) => ({
       ...node,
       name,

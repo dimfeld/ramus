@@ -165,14 +165,29 @@ export class DagNodeRunner<
             context: this.context,
             span,
             chronicleOptions,
-            event: (type, data) =>
+            event: (type, data, spanEvent = true) => {
+              if (spanEvent && data != null && span.isRecording()) {
+                const spanData = Object.fromEntries(
+                  Object.entries(data).map(([k, v]) => {
+                    if (v && typeof v === 'object' && !Array.isArray(v)) {
+                      return [k, JSON.stringify(v)];
+                    } else {
+                      return [k, v];
+                    }
+                  })
+                );
+
+                span.addEvent(type, spanData);
+              }
+
               this.eventCb({
                 type,
                 data,
                 meta: chronicleOptions?.defaults?.metadata,
                 source: this.dagName,
                 sourceNode: this.name,
-              }),
+              });
+            },
             isCancelled: () => this.state === 'cancelled',
             exitIfCancelled: () => {
               if (this.state === 'cancelled') {
