@@ -1,5 +1,5 @@
 {
-  "name": "orchard",
+  "name": "@dimfeld/orchard",
   "description": "Workflow engine and agent framework",
   "module": "dist/index.js",
   "type": "module",
