@@ -1,7 +1,5 @@
 import ky from 'ky';
 
-const BRAVE_API_KEY = process.env.BRAVE_API_KEY;
-
 export interface ContactPoint {
   type: 'contact_point';
   telephone: string;
@@ -153,13 +151,25 @@ export interface BraveSearchResponse {
   // summarizer?;
 }
 
-export async function braveSearch(query: string): Promise<BraveSearchResponse> {
+let BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY;
+
+/** Set the default API key to use for Brave Search. */
+export function initBraveSearchApiKey(key: string) {
+  BRAVE_SEARCH_API_KEY = key;
+}
+
+export interface BraveSearchOptions {
+  query: string;
+  apiKey?: string;
+}
+
+export async function braveSearch(options: BraveSearchOptions): Promise<BraveSearchResponse> {
   const result = await ky(`https://api.search.brave.com/res/v1/web/search`, {
     headers: {
-      'X-Subscription-Token': BRAVE_API_KEY,
+      'X-Subscription-Token': options.apiKey || BRAVE_SEARCH_API_KEY,
     },
     searchParams: {
-      q: query,
+      q: options.query,
     },
   }).json<BraveSearchResponse>();
 

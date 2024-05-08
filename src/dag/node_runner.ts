@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import opentelemetry from '@opentelemetry/api';
+import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
 import { tracer } from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
@@ -146,6 +146,10 @@ export class DagNodeRunner<
             span.setAttribute('dag.node.parents', this.config.parents.join(', '));
           }
 
+          for (let [k, v] of Object.entries(this.inputs ?? {})) {
+            span.setAttribute(`dag.node.input.${k}`, toSpanAttributeValue(v));
+          }
+
           let chronicleOptions: ChronicleClientOptions | undefined;
           if (this.chronicleOptions) {
             chronicleOptions = {
@@ -168,13 +172,7 @@ export class DagNodeRunner<
             event: (type, data, spanEvent = true) => {
               if (spanEvent && data != null && span.isRecording()) {
                 const spanData = Object.fromEntries(
-                  Object.entries(data).map(([k, v]) => {
-                    if (v && typeof v === 'object' && !Array.isArray(v)) {
-                      return [k, JSON.stringify(v)];
-                    } else {
-                      return [k, v];
-                    }
-                  })
+                  Object.entries(data).map(([k, v]) => [k, toSpanAttributeValue(v)])
                 );
 
                 span.addEvent(type, spanData);
@@ -197,6 +195,11 @@ export class DagNodeRunner<
             runDag: (options) =>
               runDag({ ...options, eventCb: this.eventCb, chronicle: chronicleOptions }),
           });
+
+          span.setAttribute(
+            `dag.node.output.${this.name}`,
+            toSpanAttributeValue(output as object | AttributeValue)
+          );
 
           if (this.state !== 'cancelled') {
             this.state = 'finished';
@@ -225,5 +228,13 @@ export class DagNodeRunner<
 
     // true just indicates that we ran, with no bearing on success or failure
     return true;
+  }
+}
+
+function toSpanAttributeValue(v: AttributeValue | object): AttributeValue {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    return JSON.stringify(v);
+  } else {
+    return v;
   }
 }

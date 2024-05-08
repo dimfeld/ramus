@@ -58,6 +58,14 @@ export class DagRunner<CONTEXT extends object, OUTPUT> {
         if (!this.tolerateFailures) {
           for (let runner of this.runners) {
             runner.on('error', (e) => {
+              this.eventCb({
+                data: e,
+                source: this.name,
+                sourceNode: '',
+                type: 'error',
+                meta: this.chronicleOptions?.defaults?.metadata,
+              });
+
               this.cancel.emit('cancel');
               reject(e);
             });
@@ -66,10 +74,19 @@ export class DagRunner<CONTEXT extends object, OUTPUT> {
 
         this.outputNode.on('error', (e) => {
           this.cancel.emit('cancel');
+
           reject(e);
         });
 
         this.outputNode.on('finish', (e) => {
+          this.eventCb({
+            data: e.output,
+            source: this.name,
+            sourceNode: '',
+            type: 'finish',
+            meta: this.chronicleOptions?.defaults?.metadata,
+          });
+
           resolve(e.output);
         });
 
