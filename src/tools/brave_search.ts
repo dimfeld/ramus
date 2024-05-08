@@ -138,6 +138,7 @@ export interface SearchResults {
 }
 
 export interface BraveSearchResponse {
+  __tool_source: 'brave_search';
   type: 'search';
   discussions: Discussions;
   faq: Faq;
@@ -172,6 +173,8 @@ export async function braveSearch(options: BraveSearchOptions): Promise<BraveSea
       q: options.query,
     },
   }).json<BraveSearchResponse>();
+
+  result.__tool_source = 'brave_search';
 
   return result;
 }

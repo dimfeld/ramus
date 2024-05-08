@@ -220,7 +220,7 @@ export class DagNodeRunner<
             span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
           }
         } finally {
-          span.setAttribute('finishState', this.state);
+          span.setAttribute('dag.node.finishState', this.state);
           span.end();
         }
       }
