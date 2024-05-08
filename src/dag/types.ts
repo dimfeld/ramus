@@ -51,7 +51,7 @@ export interface DagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyIn
 export interface Dag<CONTEXT extends object, INPUT> {
   name: string;
   /** Build the DAG's context, if it was not supplied externally. */
-  context?: () => CONTEXT;
+  context: () => CONTEXT;
   description?: string;
   /** If true, keep running whatever we can when a node fails.
   When false or omitted, the entire DAG will end with an error if any node fails. */

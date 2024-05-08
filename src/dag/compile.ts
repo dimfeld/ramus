@@ -75,16 +75,14 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
 
     let nodes = new Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>>();
 
-    if (!context && this.config.context) {
-      context = this.config.context();
-    }
+    context = context ?? this.config.context();
 
     for (let node of this.namedNodes) {
       const runner = new DagNodeRunner({
         name: node.name,
         dagName: this.config.name,
         config: node,
-        context: context!,
+        context,
         rootInput: input,
         chronicle,
         eventCb,
@@ -117,7 +115,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
         },
       },
       rootInput: input,
-      context: context!,
+      context,
       chronicle,
       eventCb,
     });
