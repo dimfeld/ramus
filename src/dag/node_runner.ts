@@ -4,7 +4,7 @@ import type { AnyInputs, DagNode, DagNodeState } from './types.js';
 import { tracer } from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
-import { WorkflowEventCallback } from '../events.js';
+import { FrameworkWorkflowEvent, WorkflowEvent, WorkflowEventCallback } from '../events.js';
 import { runDag } from './runner.js';
 
 export class NodeCancelledError extends Error {
@@ -23,17 +23,25 @@ export interface RunnerErrorResult {
 
 export type RunnerResult<DATA> = RunnerSuccessResult<DATA> | RunnerErrorResult;
 
-export interface DagNodeRunnerOptions<CONTEXT extends object, INPUTS extends AnyInputs, OUTPUT> {
+export interface DagNodeRunnerOptions<
+  CONTEXT extends object,
+  ROOTINPUT,
+  INPUTS extends AnyInputs,
+  OUTPUT,
+> {
   name: string;
   dagName: string;
-  config: DagNode<CONTEXT, INPUTS, OUTPUT>;
+  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
+  /** External input passed when running the DAG */
+  rootInput: ROOTINPUT;
   chronicle?: ChronicleClientOptions;
-  eventCb: WorkflowEventCallback<unknown>;
+  eventCb: WorkflowEventCallback;
 }
 
 export class DagNodeRunner<
   CONTEXT extends object,
+  ROOTINPUT,
   INPUTS extends AnyInputs,
   OUTPUT,
 > extends EventEmitter<{
@@ -43,15 +51,16 @@ export class DagNodeRunner<
 }> {
   name: string;
   dagName: string;
-  config: DagNode<CONTEXT, INPUTS, OUTPUT>;
+  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   state: DagNodeState;
   result?: RunnerResult<OUTPUT>;
   parentSpanContext?: opentelemetry.Context;
   chronicleOptions?: ChronicleClientOptions;
-  eventCb: WorkflowEventCallback<unknown>;
+  eventCb: WorkflowEventCallback;
 
   waiting: Set<string>;
+  rootInput: ROOTINPUT;
   inputs: Partial<INPUTS>;
 
   constructor({
@@ -59,13 +68,15 @@ export class DagNodeRunner<
     dagName,
     config,
     context,
+    rootInput,
     chronicle,
     eventCb,
-  }: DagNodeRunnerOptions<CONTEXT, INPUTS, OUTPUT>) {
+  }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
     this.dagName = dagName;
     this.config = config;
+    this.rootInput = rootInput;
     this.chronicleOptions = chronicle;
     this.eventCb = eventCb;
     this.context = context;
@@ -78,7 +89,7 @@ export class DagNodeRunner<
    *  concession to simplify making sure that all the parent node runners have been created first.
    **/
   init(
-    parents: DagNodeRunner<CONTEXT, AnyInputs, unknown>[],
+    parents: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>[],
     cancel: EventEmitter<{ cancel: [] }>
   ) {
     let parentSpan = opentelemetry.trace.getActiveSpan();
@@ -134,38 +145,52 @@ export class DagNodeRunner<
       return false;
     }
 
-    this.state = 'running';
     let step = `${this.dagName}:${this.name}`;
+    let chronicleOptions: ChronicleClientOptions | undefined;
+    if (this.chronicleOptions) {
+      chronicleOptions = {
+        ...this.chronicleOptions,
+        defaults: {
+          ...this.chronicleOptions?.defaults,
+          metadata: {
+            ...this.chronicleOptions?.defaults?.metadata,
+            step,
+          },
+        },
+      };
+    }
+
+    // This doesn't actually enforce that the `type` and `data` match but it's good enough for the few calls here.
+    const sendEvent = (type: string, data: unknown) => {
+      this.eventCb({
+        type,
+        data,
+        source: this.name,
+        sourceNode: this.dagName,
+        meta: chronicleOptions?.defaults?.metadata,
+      });
+    };
+
+    this.state = 'running';
     await tracer.startActiveSpan(
       step,
       {},
       this.parentSpanContext ?? opentelemetry.context.active(),
       async (span) => {
+        sendEvent('dag:node_start', { input: this.inputs });
+
         try {
           if (this.config.parents) {
             span.setAttribute('dag.node.parents', this.config.parents.join(', '));
           }
 
-          for (let [k, v] of Object.entries(this.inputs ?? {})) {
+          for (let [k, v] of Object.entries(this.inputs)) {
             span.setAttribute(`dag.node.input.${k}`, toSpanAttributeValue(v));
-          }
-
-          let chronicleOptions: ChronicleClientOptions | undefined;
-          if (this.chronicleOptions) {
-            chronicleOptions = {
-              ...this.chronicleOptions,
-              defaults: {
-                ...this.chronicleOptions?.defaults,
-                metadata: {
-                  ...this.chronicleOptions?.defaults?.metadata,
-                  step,
-                },
-              },
-            };
           }
 
           let output = await this.config.run({
             input: this.inputs as INPUTS,
+            rootInput: this.rootInput,
             context: this.context,
             span,
             chronicleOptions,
@@ -178,13 +203,7 @@ export class DagNodeRunner<
                 span.addEvent(type, spanData);
               }
 
-              this.eventCb({
-                type,
-                data,
-                meta: chronicleOptions?.defaults?.metadata,
-                source: this.dagName,
-                sourceNode: this.name,
-              });
+              sendEvent(type, data);
             },
             isCancelled: () => this.state === 'cancelled',
             exitIfCancelled: () => {
@@ -202,6 +221,7 @@ export class DagNodeRunner<
           );
 
           if (this.state !== 'cancelled') {
+            sendEvent('dag:node_finish', { output });
             this.state = 'finished';
             this.result = { type: 'success', output };
             this.emit('finish', { name: this.name, output });
@@ -213,6 +233,7 @@ export class DagNodeRunner<
             let err = e as Error;
             this.state = 'error';
             this.result = { type: 'error', error: e as Error };
+            sendEvent('dag:node_error', { error: e });
             this.emit('error', e as Error);
 
             span.recordException(err);

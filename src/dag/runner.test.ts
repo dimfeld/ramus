@@ -28,24 +28,24 @@ test('simple DAG', async () => {
     },
     collector: {
       parents: ['intone', 'inttwo'],
-      run: async ({ input }) => {
-        return input.intone + input.inttwo;
+      run: async ({ input, rootInput }) => {
+        return input.intone + input.inttwo + rootInput;
       },
     },
   };
 
-  const dag: Dag<Context> = {
+  const dag: Dag<Context, number> = {
     name: 'test',
     nodes,
   };
 
-  let result = await runDag({ dag, context: { ctxValue: 5 } });
-  // 2 * ((5 + 1) + 1)
-  expect(result).toEqual(14);
+  let result = await runDag({ dag, input: 10, context: { ctxValue: 5 } });
+  // 2 * ((5 + 1) + 1) + 10
+  expect(result).toEqual(24);
 });
 
 test('single node', async () => {
-  const nodes: DagConfiguration<Context> = {
+  const nodes: DagConfiguration<Context, undefined> = {
     root: {
       run: async ({ context }) => {
         return context.ctxValue + 1;
@@ -53,32 +53,34 @@ test('single node', async () => {
     },
   };
 
-  const dag: Dag<Context> = {
+  const dag: Dag<Context, undefined> = {
     name: 'test',
     nodes,
   };
 
-  let result = await runDag({ dag, context: { ctxValue: 5 } });
+  let result = await runDag({ dag, input: undefined, context: { ctxValue: 5 } });
   // 2 * ((5 + 1) + 1)
   expect(result).toEqual(6);
 });
 
 test('no nodes', async () => {
-  const nodes: DagConfiguration<Context> = {};
+  const nodes: DagConfiguration<Context, undefined> = {};
 
-  const dag: Dag<Context> = {
+  const dag: Dag<Context, undefined> = {
     name: 'test',
     nodes,
   };
 
-  await expect(runDag({ dag, context: { ctxValue: 5 } })).rejects.toThrowError('DAG has no nodes');
+  await expect(runDag({ dag, input: undefined, context: { ctxValue: 5 } })).rejects.toThrowError(
+    'DAG has no nodes'
+  );
 });
 
 test('multiple root nodes', async () => {
-  const nodes: DagConfiguration<Context> = {
+  const nodes: DagConfiguration<Context, number> = {
     rootOne: {
-      run: async ({ context }) => {
-        return context.ctxValue + 1;
+      run: async ({ context, rootInput }) => {
+        return context.ctxValue + rootInput + 1;
       },
     },
     rootTwo: {
@@ -99,12 +101,12 @@ test('multiple root nodes', async () => {
     nodes,
   };
 
-  let result = await runDag({ dag, context: { ctxValue: 5 } });
-  expect(result).toEqual(13);
+  let result = await runDag({ dag, input: 10, context: { ctxValue: 5 } });
+  expect(result).toEqual(23);
 });
 
 test('multiple leaf nodes', async () => {
-  const nodes: DagConfiguration<Context> = {
+  const nodes: DagConfiguration<Context, undefined> = {
     root: {
       run: async ({ context }) => {
         return context.ctxValue + 1;
@@ -124,12 +126,12 @@ test('multiple leaf nodes', async () => {
     },
   };
 
-  const dag: Dag<Context> = {
+  const dag: Dag<Context, undefined> = {
     name: 'test',
     nodes,
   };
 
-  let result = await runDag({ dag, context: { ctxValue: 5 } });
+  let result = await runDag({ dag, input: undefined, context: { ctxValue: 5 } });
   expect(result).toEqual({
     outputOne: 7,
     outputTwo: 8,
@@ -137,7 +139,7 @@ test('multiple leaf nodes', async () => {
 });
 
 test('node error when tolerating failures', async () => {
-  const nodes: DagConfiguration<Context> = {
+  const nodes: DagConfiguration<Context, undefined> = {
     root: {
       run: async ({ context }) => {
         return context.ctxValue + 1;
@@ -157,13 +159,13 @@ test('node error when tolerating failures', async () => {
     },
   };
 
-  const dag: Dag<Context> = {
+  const dag: Dag<Context, undefined> = {
     name: 'test',
     nodes,
     tolerateFailures: true,
   };
 
-  let result = await runDag({ dag, context: { ctxValue: 5 } });
+  let result = await runDag({ dag, input: undefined, context: { ctxValue: 5 } });
   expect(result).toEqual({
     outputOne: undefined,
     outputTwo: 8,
@@ -171,7 +173,7 @@ test('node error when tolerating failures', async () => {
 });
 
 test('node error when not tolerating failures', async () => {
-  const nodes: DagConfiguration<Context> = {
+  const nodes: DagConfiguration<Context, undefined> = {
     root: {
       run: async ({ context }) => {
         return context.ctxValue + 1;
@@ -191,10 +193,12 @@ test('node error when not tolerating failures', async () => {
     },
   };
 
-  const dag: Dag<Context> = {
+  const dag: Dag<Context, undefined> = {
     name: 'test',
     nodes,
   };
 
-  await expect(runDag({ dag, context: { ctxValue: 5 } })).rejects.toThrowError('failure');
+  await expect(runDag({ dag, input: undefined, context: { ctxValue: 5 } })).rejects.toThrowError(
+    'failure'
+  );
 });

@@ -5,11 +5,13 @@ import { DagRunnerOptions } from './runner.js';
 export type DagNodeState = 'waiting' | 'running' | 'cancelled' | 'error' | 'finished';
 
 /** The structure passed to a DAG node when it executes. */
-export interface DagNodeInput<CONTEXT extends object, INPUTS extends AnyInputs> {
+export interface DagNodeInput<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs> {
   /** The context passed to the DAG by whatever started it. */
   context: CONTEXT;
   /** Inputs from the node's parents */
   input: INPUTS;
+  /** Input from the code that spawned this DAG */
+  rootInput: ROOTINPUT;
   /** The OpenTelemetry span for this execution. */
   span: Span;
   /** Return if this node has been cancelled due to failures elsewhere in the DAG. */
@@ -32,30 +34,32 @@ export interface DagNodeInput<CONTEXT extends object, INPUTS extends AnyInputs> 
   event: (type: string, data: unknown, spanEvent?: boolean) => void;
 
   /** Run another DAG as part of this execution. */
-  runDag<CONTEXT extends object, OUTPUT>(
-    options: Omit<DagRunnerOptions<CONTEXT, OUTPUT>, 'chronicle' | 'eventCb'>
+  runDag<CONTEXT extends object, NEWINPUT, OUTPUT>(
+    options: Omit<DagRunnerOptions<CONTEXT, NEWINPUT, OUTPUT>, 'chronicle' | 'eventCb'>
   ): Promise<OUTPUT>;
 }
 
 export type AnyInputs = Record<string, unknown>;
 
-export interface DagNode<CONTEXT extends object, INPUTS extends AnyInputs, OUTPUT> {
+export interface DagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs, OUTPUT> {
   parents?: Array<keyof INPUTS>;
   /** If true, run this node even if one of its parents has an error. */
   tolerateParentErrors?: boolean;
-  run: (input: DagNodeInput<CONTEXT, INPUTS>) => OUTPUT | Promise<OUTPUT>;
+  run: (input: DagNodeInput<CONTEXT, ROOTINPUT, INPUTS>) => OUTPUT | Promise<OUTPUT>;
 }
 
-export interface Dag<CONTEXT extends object> {
+export interface Dag<CONTEXT extends object, INPUT> {
   name: string;
+  /** Build the DAG's context, if it was not supplied externally. */
+  context?: () => CONTEXT;
   description?: string;
   /** If true, keep running whatever we can when a node fails.
   When false or omitted, the entire DAG will end with an error if any node fails. */
   tolerateFailures?: boolean;
-  nodes: DagConfiguration<CONTEXT>;
+  nodes: DagConfiguration<CONTEXT, INPUT>;
 }
 
-export type DagConfiguration<CONTEXT extends object> = Record<
+export type DagConfiguration<CONTEXT extends object, ROOTINPUT> = Record<
   string,
-  DagNode<CONTEXT, AnyInputs, unknown>
+  DagNode<CONTEXT, ROOTINPUT, AnyInputs, unknown>
 >;

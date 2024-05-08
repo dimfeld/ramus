@@ -5,11 +5,11 @@ import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
 
 /** @internal Analyze some parts of the DAG. This is only exported for testing and isn't useful on its own. */
-export function analyzeDag(dag: Record<string, DagNode<any, any, any>>) {
+export function analyzeDag(dag: Record<string, DagNode<any, any, any, any>>) {
   // Start with all nodes potentially being leaf nodes and then exclude them as we go.
   const leafNodes = new Set<string>(Object.keys(dag));
 
-  function step(node: DagNode<object, AnyInputs, unknown>, seen: string[]) {
+  function step(node: DagNode<object, any, AnyInputs, unknown>, seen: string[]) {
     for (let parent of node.parents ?? []) {
       leafNodes.delete(parent);
 
@@ -40,23 +40,24 @@ export function analyzeDag(dag: Record<string, DagNode<any, any, any>>) {
   };
 }
 
-interface NamedDagNode<CONTEXT extends object, INPUTS extends AnyInputs, OUTPUT>
-  extends DagNode<CONTEXT, INPUTS, OUTPUT> {
+interface NamedDagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs, OUTPUT>
+  extends DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT> {
   name: string;
 }
 
-export interface BuildRunnerOptions<CONTEXT extends object> {
-  context: CONTEXT;
+export interface BuildRunnerOptions<CONTEXT extends object, ROOTINPUT> {
+  context?: CONTEXT;
+  input: ROOTINPUT;
   chronicle?: ChronicleClientOptions;
-  eventCb: WorkflowEventCallback<unknown>;
+  eventCb: WorkflowEventCallback;
 }
 
-export class CompiledDag<CONTEXT extends object, OUTPUT> {
-  config: Dag<CONTEXT>;
+export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
+  config: Dag<CONTEXT, ROOTINPUT>;
   info: ReturnType<typeof analyzeDag>;
 
-  namedNodes: NamedDagNode<CONTEXT, AnyInputs, unknown>[];
-  constructor(dag: Dag<CONTEXT>) {
+  namedNodes: NamedDagNode<CONTEXT, ROOTINPUT, AnyInputs, unknown>[];
+  constructor(dag: Dag<CONTEXT, ROOTINPUT>) {
     this.config = dag;
     this.info = analyzeDag(dag.nodes);
     this.namedNodes = Object.entries(dag.nodes).map(([name, node]) => ({
@@ -69,17 +70,22 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
     }
   }
 
-  buildRunners({ context, chronicle, eventCb }: BuildRunnerOptions<CONTEXT>) {
+  buildRunners({ context, input, chronicle, eventCb }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
     const cancel = new EventEmitter<{ cancel: [] }>();
 
-    let nodes = new Map<string, DagNodeRunner<CONTEXT, AnyInputs, unknown>>();
+    let nodes = new Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>>();
+
+    if (!context && this.config.context) {
+      context = this.config.context();
+    }
 
     for (let node of this.namedNodes) {
       const runner = new DagNodeRunner({
         name: node.name,
         dagName: this.config.name,
         config: node,
-        context,
+        context: context!,
+        rootInput: input,
         chronicle,
         eventCb,
       });
@@ -93,7 +99,7 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
 
     let leafRunners = this.info.leafNodes.map((name) => nodes.get(name)!);
 
-    const outputNode = new DagNodeRunner<CONTEXT, AnyInputs, OUTPUT>({
+    const outputNode = new DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>({
       name: '__output',
       dagName: this.config.name,
       config: {
@@ -110,7 +116,8 @@ export class CompiledDag<CONTEXT extends object, OUTPUT> {
           return input as OUTPUT;
         },
       },
-      context,
+      rootInput: input,
+      context: context!,
       chronicle,
       eventCb,
     });
