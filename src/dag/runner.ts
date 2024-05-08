@@ -5,10 +5,12 @@ import type { AnyInputs, Dag } from './types.js';
 import { CompiledDag } from './compile.js';
 import { DagNodeRunner } from './node_runner.js';
 import { runInSpan } from '../tracing.js';
+import { NodeResultCache } from '../cache.js';
 
 export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = unknown> {
   dag: Dag<CONTEXT, ROOTINPUT> | CompiledDag<CONTEXT, ROOTINPUT, OUTPUT>;
   input: ROOTINPUT;
+  cache?: NodeResultCache;
   context?: CONTEXT;
   /** Options for a Chronicle LLM proxy client */
   chronicle?: ChronicleClientOptions;
@@ -36,6 +38,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     input,
     chronicle,
     eventCb,
+    cache,
   }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT>) {
     if (!(dag instanceof CompiledDag)) {
       dag = new CompiledDag(dag);
@@ -52,6 +55,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
       input,
       chronicle,
       eventCb: this.eventCb,
+      cache,
     });
 
     this.name = dag.config.name;

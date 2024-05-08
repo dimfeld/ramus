@@ -3,6 +3,7 @@ import { AnyInputs, Dag, DagNode } from './types.js';
 import { DagNodeRunner } from './node_runner.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
+import type { NodeResultCache } from '../cache.js';
 
 /** @internal Analyze some parts of the DAG. This is only exported for testing and isn't useful on its own. */
 export function analyzeDag(dag: Record<string, DagNode<any, any, any, any>>) {
@@ -50,6 +51,7 @@ export interface BuildRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   input: ROOTINPUT;
   chronicle?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
+  cache?: NodeResultCache;
 }
 
 export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
@@ -70,7 +72,13 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     }
   }
 
-  buildRunners({ context, input, chronicle, eventCb }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
+  buildRunners({
+    context,
+    input,
+    chronicle,
+    cache,
+    eventCb,
+  }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
     const cancel = new EventEmitter<{ cancel: [] }>();
 
     let nodes = new Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>>();
@@ -86,6 +94,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
         rootInput: input,
         chronicle,
         eventCb,
+        cache,
       });
       nodes.set(node.name, runner);
     }

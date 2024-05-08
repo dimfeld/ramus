@@ -26,14 +26,18 @@
     "dev": "tsc --watch"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/better-sqlite3": "^7.6.10",
+    "@types/bun": "latest",
+    "@types/json-stable-stringify": "^1.0.36"
   },
   "peerDependencies": {
+    "better-sqlite3": "^9.0.0",
     "typescript": "^5.0.0"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.8.0",
     "chronicle-proxy": "file:../chronicle/js-client",
+    "json-stable-stringify": "^1.1.1",
     "ky": "^1.2.4"
   }
 }

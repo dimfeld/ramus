@@ -5,6 +5,7 @@ import { tracer } from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { FrameworkWorkflowEvent, WorkflowEvent, WorkflowEventCallback } from '../events.js';
+import { calculateCacheKey, type NodeResultCache } from '../cache.js';
 import { runDag } from './runner.js';
 
 export class NodeCancelledError extends Error {
@@ -35,6 +36,7 @@ export interface DagNodeRunnerOptions<
   context: CONTEXT;
   /** External input passed when running the DAG */
   rootInput: ROOTINPUT;
+  cache?: NodeResultCache;
   chronicle?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
 }
@@ -54,6 +56,7 @@ export class DagNodeRunner<
   config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   state: DagNodeState;
+  cache?: NodeResultCache;
   result?: RunnerResult<OUTPUT>;
   parentSpanContext?: opentelemetry.Context;
   chronicleOptions?: ChronicleClientOptions;
@@ -70,6 +73,7 @@ export class DagNodeRunner<
     context,
     rootInput,
     chronicle,
+    cache,
     eventCb,
   }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
     super();
@@ -78,6 +82,7 @@ export class DagNodeRunner<
     this.config = config;
     this.rootInput = rootInput;
     this.chronicleOptions = chronicle;
+    this.cache = cache;
     this.eventCb = eventCb;
     this.context = context;
     this.state = 'waiting';
@@ -188,32 +193,46 @@ export class DagNodeRunner<
             span.setAttribute(`dag.node.input.${k}`, toSpanAttributeValue(v));
           }
 
-          let output = await this.config.run({
-            input: this.inputs as INPUTS,
-            rootInput: this.rootInput,
-            context: this.context,
-            span,
-            chronicleOptions,
-            event: (type, data, spanEvent = true) => {
-              if (spanEvent && data != null && span.isRecording()) {
-                const spanData = Object.fromEntries(
-                  Object.entries(data).map(([k, v]) => [k, toSpanAttributeValue(v)])
-                );
+          let output: OUTPUT;
 
-                span.addEvent(type, spanData);
-              }
+          const cacheKey = this.cache
+            ? calculateCacheKey(this.config.run, this.inputs, this.rootInput)
+            : '';
+          const cachedValue = await this.cache?.get(this.name, cacheKey);
 
-              sendEvent(type, data);
-            },
-            isCancelled: () => this.state === 'cancelled',
-            exitIfCancelled: () => {
-              if (this.state === 'cancelled') {
-                throw new NodeCancelledError();
-              }
-            },
-            runDag: (options) =>
-              runDag({ ...options, eventCb: this.eventCb, chronicle: chronicleOptions }),
-          });
+          if (cachedValue) {
+            output = JSON.parse(cachedValue) as OUTPUT;
+            span.setAttribute('dag:cache_hit', true);
+          } else {
+            output = await this.config.run({
+              input: this.inputs as INPUTS,
+              rootInput: this.rootInput,
+              context: this.context,
+              span,
+              chronicleOptions,
+              event: (type, data, spanEvent = true) => {
+                if (spanEvent && data != null && span.isRecording()) {
+                  const spanData = Object.fromEntries(
+                    Object.entries(data).map(([k, v]) => [k, toSpanAttributeValue(v)])
+                  );
+
+                  span.addEvent(type, spanData);
+                }
+
+                sendEvent(type, data);
+              },
+              isCancelled: () => this.state === 'cancelled',
+              exitIfCancelled: () => {
+                if (this.state === 'cancelled') {
+                  throw new NodeCancelledError();
+                }
+              },
+              runDag: (options) =>
+                runDag({ ...options, eventCb: this.eventCb, chronicle: chronicleOptions }),
+            });
+
+            this.cache?.set(this.name, cacheKey, JSON.stringify(output));
+          }
 
           span.setAttribute(
             `dag.node.output.${this.name}`,
