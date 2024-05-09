@@ -22,14 +22,15 @@
     "dist"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc",
+    "build": "rm -rf dist && tsc && publint",
     "dev": "tsc --watch"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",
     "@types/bun": "latest",
     "@types/json-stable-stringify": "^1.0.36",
-    "jsonschema": "^1.4.1"
+    "jsonschema": "^1.4.1",
+    "publint": "^0.2.7"
   },
   "peerDependencies": {
     "better-sqlite3": "^9.0.0",
