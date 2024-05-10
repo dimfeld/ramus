@@ -8,7 +8,7 @@ export interface NodeResultCache {
   clear: (node?: string) => void | Promise<void>;
 }
 
-/** A cache implementation that persists data to a SQLite Database. */
+/** A cache implementation that persists data to a SQLite Database. This adds an `orchard_cache` table to the database */
 export function betterSqliteCache(db: Database) {
   db.exec(
     'CREATE TABLE IF NOT EXISTS orchard_cache (node TEXT NOT NULL, key TEXT NOT NULL, value TEXT, created_at int, PRIMARY KEY (node, key))'
