@@ -2,7 +2,14 @@ import { Span } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { DagRunnerOptions } from './runner.js';
 
-export type DagNodeState = 'waiting' | 'ready' | 'running' | 'cancelled' | 'error' | 'finished';
+export type DagNodeState =
+  | 'waiting'
+  | 'ready'
+  | 'pendingSemaphore'
+  | 'running'
+  | 'cancelled'
+  | 'error'
+  | 'finished';
 
 /** The structure passed to a DAG node when it executes. */
 export interface DagNodeInput<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs> {
@@ -43,6 +50,8 @@ export type AnyInputs = Record<string, unknown>;
 
 export interface DagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs, OUTPUT> {
   parents?: Array<keyof INPUTS>;
+  /** If set, participate in global rate limiting of nodes with the same `semaphoreKey`. */
+  semaphoreKey?: string;
   /** If true, run this node even if one of its parents has an error. */
   tolerateParentErrors?: boolean;
   run: (input: DagNodeInput<CONTEXT, ROOTINPUT, INPUTS>) => OUTPUT | Promise<OUTPUT>;

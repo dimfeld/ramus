@@ -1,0 +1,79 @@
+interface SemaphoreClass {
+  limit: number;
+  current: number;
+  pending: Array<() => void>;
+}
+
+export class Semaphore {
+  counts = new Map<string, SemaphoreClass>();
+
+  constructor(limits: Record<string, number>) {
+    Object.entries(limits).forEach(([key, limit]) => {
+      this.counts.set(key, { limit, current: 0, pending: [] });
+    });
+  }
+
+  /** Update the limit for a semaphore key. */
+  setLimit(key: string, limit: number) {
+    let value = this.counts.get(key);
+    if (value) {
+      value.limit = limit;
+
+      // If the limit went up, run some pending tasks.
+      while (value.pending.length > 0 && value.current < value.limit) {
+        let resolve = value.pending.shift();
+        resolve?.();
+        value.current++;
+      }
+    } else {
+      this.counts.set(key, { limit, current: 0, pending: [] });
+    }
+  }
+
+  /** Acquire a slot in the semaphore. Returns a promise that resolves when the slot is available.
+   * These slots will not automatically release; you must call `release` with the same key when done.
+   * You can use the `run` function instead to automatically manage the acquisition and release of the slot. */
+  async acquire(key: string) {
+    let value = this.counts.get(key);
+    if (!value) {
+      // If there's no data for this key, then there's no limit, so no point in tracking anything.
+      // This can legitimately happen when there are multiple semaphores in use for a node and only some of them
+      // are rate limiting its key.
+      return Promise.resolve();
+    }
+
+    if (value.current >= value.limit) {
+      // We're at the limit already, so wait for a release
+      return new Promise<void>((resolve) => {
+        value.pending.push(resolve);
+      });
+    } else {
+      // We're not at the limit, so increment the count and resolve the promise immediately.
+      value.current += 1;
+      return Promise.resolve();
+    }
+  }
+
+  release(key: string) {
+    let value = this.counts.get(key);
+    if (value) {
+      if (value.pending.length > 0 && value.current === value.limit) {
+        let resolve = value.pending.shift();
+        resolve?.();
+      } else {
+        value.current = Math.max(value.current - 1, 0);
+      }
+    }
+  }
+
+  /** Run a function as soon as the semaphore key's limit allows it */
+  async run<T>(key: string, f: () => Promise<T>): Promise<T> {
+    await this.acquire(key);
+    try {
+      let value = await f();
+      return value;
+    } finally {
+      this.release(key);
+    }
+  }
+}

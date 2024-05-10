@@ -1,6 +1,7 @@
 import { test, expect } from 'bun:test';
 import { EventEmitter } from 'events';
 import { DagNodeRunner } from './node_runner';
+import { Semaphore } from '../semaphore';
 
 function outputCatcher(runner: DagNodeRunner<any, any, any>) {
   let finished = false;
@@ -282,6 +283,45 @@ test('manual run', async () => {
   expect(result).toEqual({ name: 'node', output: 4 });
   expect(runner.state).toBe('finished');
   expect(runner.result).toEqual({ type: 'success', output: 4 });
+});
+
+test('with semaphores', async () => {
+  let semaphore = new Semaphore({ key: 0 });
+  let ran = false;
+  let runner = new DagNodeRunner({
+    name: 'node',
+    dagName: 'node',
+    semaphores: [semaphore],
+    config: {
+      semaphoreKey: 'key',
+      run: ({ context }) => {
+        ran = true;
+        return context.value + 1;
+      },
+    },
+    rootInput: {},
+    context: { value: 1 },
+    eventCb: () => {},
+  });
+  const { promise, finished } = outputCatcher(runner);
+
+  runner.init([], new EventEmitter());
+
+  // should be waiting before we started trying to run it
+  expect(runner.state).toBe('waiting');
+  expect(finished()).toBe(false);
+
+  let runPromise = runner.run();
+  expect(ran).toBe(false);
+  expect(finished()).toBe(false);
+
+  semaphore.setLimit('key', 1);
+  await runPromise;
+
+  let result = await promise;
+  expect(result).toEqual({ name: 'node', output: 2 });
+  expect(runner.state).toBe('finished');
+  expect(runner.result).toEqual({ type: 'success', output: 2 });
 });
 
 test.todo('exitIfCancelled', async () => {});

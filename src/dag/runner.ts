@@ -6,12 +6,16 @@ import { CompiledDag } from './compile.js';
 import { DagNodeRunner } from './node_runner.js';
 import { runInSpan } from '../tracing.js';
 import { NodeResultCache } from '../cache.js';
+import { Semaphore } from '../semaphore.js';
 
 export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = unknown> {
   dag: Dag<CONTEXT, ROOTINPUT> | CompiledDag<CONTEXT, ROOTINPUT, OUTPUT>;
   input: ROOTINPUT;
   cache?: NodeResultCache;
   context?: CONTEXT;
+  /** Semaphores which can be used to rate limit operations by the DAG. This accepts multiple Semaphores, which
+   * can be used to provide a semaphore for global operations and another one for this particular DAG, for example. */
+  semaphores?: Semaphore[];
   /** Options for a Chronicle LLM proxy client */
   chronicle?: ChronicleClientOptions;
   /** A function that can take events from the running DAG */
