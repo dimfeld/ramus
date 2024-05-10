@@ -138,6 +138,8 @@ export interface SearchResults {
 }
 
 export interface BraveSearchResponse {
+  /** Not part of the actual response, but this helps identify it later in cases where we might have
+   * more than one format. */
   __tool_source: 'brave_search';
   type: 'search';
   discussions: Discussions;
@@ -152,7 +154,7 @@ export interface BraveSearchResponse {
   // summarizer?;
 }
 
-let BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY;
+export let BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY;
 
 /** Set the default API key to use for Brave Search. */
 export function initBraveSearchApiKey(key: string) {
@@ -161,17 +163,46 @@ export function initBraveSearchApiKey(key: string) {
 
 export interface BraveSearchOptions {
   query: string;
+  /** default 20, maximum 20 */
+  count?: number;
+  /** Number of pages to skip */
+  offset?: number;
+  /** When a search result was indexed. */
+  freshness?: /** Latest day */
+  | 'pd'
+    /** Latest week */
+    | 'pw'
+    /** Latest month */
+    | 'pm'
+    /** Latest year */
+    | 'py'
+    /** Specific date range: YYYY-MM-DDtoYYYY-MM-DD */
+    | `${number}-${number}-${number}to${number}-${number}-${number}`;
   apiKey?: string;
 }
 
 export async function braveSearch(options: BraveSearchOptions): Promise<BraveSearchResponse> {
+  let searchParams = new URLSearchParams({
+    q: options.query,
+  });
+
+  if (options.count) {
+    searchParams.set('count', options.count.toString());
+  }
+
+  if (options.offset) {
+    searchParams.set('offset', options.offset.toString());
+  }
+
+  if (options.freshness) {
+    searchParams.set('freshness', options.freshness);
+  }
+
   const result = await ky(`https://api.search.brave.com/res/v1/web/search`, {
     headers: {
       'X-Subscription-Token': options.apiKey || BRAVE_SEARCH_API_KEY,
     },
-    searchParams: {
-      q: options.query,
-    },
+    searchParams,
   }).json<BraveSearchResponse>();
 
   result.__tool_source = 'brave_search';
