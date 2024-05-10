@@ -57,3 +57,16 @@ test('parallelism', async () => {
 
   expect(maxCounter).toBe(50);
 });
+
+test('unknown key', async () => {
+  let semaphore = new Semaphore({ key: 1 });
+
+  await semaphore.acquire('otherKey');
+  semaphore.release('otherKey');
+});
+
+test('extra release leaves count at 0', async () => {
+  let semaphore = new Semaphore({ key: 1 });
+  semaphore.release('key');
+  expect(semaphore.counts.get('key')?.current).toBe(0);
+});
