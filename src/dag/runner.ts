@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
-import type { AnyInputs, Dag } from './types.js';
+import type { AnyInputs, Dag, DagNodeState } from './types.js';
 import { CompiledDag } from './compile.js';
 import { DagNodeRunner } from './node_runner.js';
 import { runInSpan } from '../tracing.js';
@@ -16,11 +16,16 @@ export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = un
   chronicle?: ChronicleClientOptions;
   /** A function that can take events from the running DAG */
   eventCb?: WorkflowEventCallback;
+  /** A function that returns if the DAG should run nodes whenever they become ready, or wait for an external source to
+   * run them. */
+  autorun?: () => boolean;
 }
 
 function noop() {}
 
-export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
+export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> extends EventEmitter<{
+  state: [{ sourceNode: string; source: string; state: DagNodeState }];
+}> {
   name: string;
   context?: CONTEXT;
   runners: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>[];
@@ -28,6 +33,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
   tolerateFailures: boolean;
   chronicleOptions?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
+  autorun: () => boolean;
   input: ROOTINPUT;
 
   cancel: EventEmitter<{ cancel: [] }>;
@@ -39,7 +45,9 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     chronicle,
     eventCb,
     cache,
+    autorun,
   }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT>) {
+    super();
     if (!(dag instanceof CompiledDag)) {
       dag = new CompiledDag(dag);
     }
@@ -56,6 +64,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
       chronicle,
       eventCb: this.eventCb,
       cache,
+      autorun,
     });
 
     this.name = dag.config.name;
@@ -63,6 +72,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     this.runners = runners;
     this.cancel = cancel;
     this.outputNode = outputNode;
+    this.autorun = autorun ?? (() => true);
   }
 
   /** Run the entire DAG to completion */
@@ -77,8 +87,11 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
           meta: this.chronicleOptions?.defaults?.metadata,
         });
 
-        if (!this.tolerateFailures) {
-          for (let runner of this.runners) {
+        for (let runner of this.runners) {
+          // State events are just for the UI when the DAG is being actively monitored.
+          runner.on('state', (e) => this.emit('state', e));
+
+          if (!this.tolerateFailures) {
             runner.on('error', (e) => {
               this.eventCb({
                 data: { error: e },
@@ -96,7 +109,6 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
 
         this.outputNode.on('error', (e) => {
           this.cancel.emit('cancel');
-
           reject(e);
         });
 
@@ -113,9 +125,11 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> {
         });
 
         // Start running all root nodes
-        for (let runner of this.runners) {
-          if (!runner.config.parents?.length) {
-            runner.run();
+        if (this.autorun()) {
+          for (let runner of this.runners) {
+            if (!runner.config.parents?.length) {
+              runner.run();
+            }
           }
         }
       });

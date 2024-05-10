@@ -52,6 +52,7 @@ export interface BuildRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   chronicle?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
   cache?: NodeResultCache;
+  autorun?: () => boolean;
 }
 
 export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
@@ -78,6 +79,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     chronicle,
     cache,
     eventCb,
+    autorun,
   }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
     const cancel = new EventEmitter<{ cancel: [] }>();
 
@@ -95,6 +97,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
         chronicle,
         eventCb,
         cache,
+        autorun,
       });
       nodes.set(node.name, runner);
     }

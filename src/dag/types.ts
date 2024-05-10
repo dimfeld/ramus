@@ -2,7 +2,7 @@ import { Span } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { DagRunnerOptions } from './runner.js';
 
-export type DagNodeState = 'waiting' | 'running' | 'cancelled' | 'error' | 'finished';
+export type DagNodeState = 'waiting' | 'ready' | 'running' | 'cancelled' | 'error' | 'finished';
 
 /** The structure passed to a DAG node when it executes. */
 export interface DagNodeInput<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs> {
@@ -35,7 +35,7 @@ export interface DagNodeInput<CONTEXT extends object, ROOTINPUT, INPUTS extends 
 
   /** Run another DAG as part of this execution. */
   runDag<CONTEXT extends object, NEWINPUT, OUTPUT>(
-    options: Omit<DagRunnerOptions<CONTEXT, NEWINPUT, OUTPUT>, 'chronicle' | 'eventCb'>
+    options: Omit<DagRunnerOptions<CONTEXT, NEWINPUT, OUTPUT>, 'chronicle' | 'eventCb' | 'autorun'>
   ): Promise<OUTPUT>;
 }
 
@@ -63,3 +63,5 @@ export type DagConfiguration<CONTEXT extends object, ROOTINPUT> = Record<
   string,
   DagNode<CONTEXT, ROOTINPUT, AnyInputs, unknown>
 >;
+
+export type DagOutput<NODE> = NODE extends DagNode<any, any, any, infer OUTPUT> ? OUTPUT : never;

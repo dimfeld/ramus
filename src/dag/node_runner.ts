@@ -6,7 +6,7 @@ import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { FrameworkWorkflowEvent, WorkflowEvent, WorkflowEventCallback } from '../events.js';
 import { calculateCacheKey, type NodeResultCache } from '../cache.js';
-import { runDag } from './runner.js';
+import { DagRunner, runDag } from './runner.js';
 
 export class NodeCancelledError extends Error {
   name = 'CancelledError';
@@ -39,6 +39,7 @@ export interface DagNodeRunnerOptions<
   cache?: NodeResultCache;
   chronicle?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
+  autorun?: () => boolean;
 }
 
 export class DagNodeRunner<
@@ -47,6 +48,7 @@ export class DagNodeRunner<
   INPUTS extends AnyInputs,
   OUTPUT,
 > extends EventEmitter<{
+  state: [{ sourceNode: string; source: string; state: DagNodeState }];
   finish: [{ name: string; output: OUTPUT }];
   error: [Error];
   parentError: [];
@@ -60,6 +62,7 @@ export class DagNodeRunner<
   result?: RunnerResult<OUTPUT>;
   parentSpanContext?: opentelemetry.Context;
   chronicleOptions?: ChronicleClientOptions;
+  autorun: () => boolean;
   eventCb: WorkflowEventCallback;
 
   waiting: Set<string>;
@@ -75,6 +78,7 @@ export class DagNodeRunner<
     chronicle,
     cache,
     eventCb,
+    autorun,
   }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
@@ -84,10 +88,16 @@ export class DagNodeRunner<
     this.chronicleOptions = chronicle;
     this.cache = cache;
     this.eventCb = eventCb;
+    this.autorun = autorun ?? (() => true);
     this.context = context;
     this.state = 'waiting';
     this.waiting = new Set();
     this.inputs = {};
+  }
+
+  setState(state: DagNodeState) {
+    this.state = state;
+    this.emit('state', { sourceNode: this.name, source: this.dagName, state });
   }
 
   /** `init` is called after the constructors have all been run, which is mostly a design
@@ -107,7 +117,7 @@ export class DagNodeRunner<
 
     cancel.on('cancel', () => {
       if (this.state === 'waiting' || this.state === 'running') {
-        this.state = 'cancelled';
+        this.setState('cancelled');
       }
     });
 
@@ -118,7 +128,7 @@ export class DagNodeRunner<
 
       this.waiting.delete(e.name);
       this.inputs[e.name as keyof INPUTS] = e.output;
-      this.run();
+      this.run(true);
     };
 
     const handleParentError = (name: string) => {
@@ -129,7 +139,7 @@ export class DagNodeRunner<
       if (this.config.tolerateParentErrors) {
         handleFinishedParent({ name, output: undefined });
       } else {
-        this.state = 'cancelled';
+        this.setState('cancelled');
         // Pass the error down the chain
         this.emit('parentError');
       }
@@ -144,10 +154,23 @@ export class DagNodeRunner<
     }
   }
 
-  async run(): Promise<boolean> {
-    if (this.waiting.size > 0 || this.state !== 'waiting') {
-      // Not ready to execute yet
-      return false;
+  async run(triggeredFromParentFinished = false): Promise<boolean> {
+    if (triggeredFromParentFinished) {
+      if (this.waiting.size > 0 || (this.state !== 'waiting' && this.state !== 'ready')) {
+        // Not ready to execute yet
+        return false;
+      }
+
+      if (!this.autorun()) {
+        this.setState('ready');
+        return false;
+      }
+    } else {
+      // We were manually told to run, but this node is still waiting for some parent input,
+      // or we're currently running, so we can't execute yet
+      if (this.waiting.size > 0 || this.state === 'running') {
+        return false;
+      }
     }
 
     let step = `${this.dagName}:${this.name}`;
@@ -176,7 +199,7 @@ export class DagNodeRunner<
       });
     };
 
-    this.state = 'running';
+    this.setState('running');
     await tracer.startActiveSpan(
       step,
       {},
@@ -227,8 +250,19 @@ export class DagNodeRunner<
                   throw new NodeCancelledError();
                 }
               },
-              runDag: (options) =>
-                runDag({ ...options, eventCb: this.eventCb, chronicle: chronicleOptions }),
+              runDag: (options) => {
+                let childRunner = new DagRunner({
+                  ...options,
+                  autorun: this.autorun,
+                  eventCb: this.eventCb,
+                  chronicle: chronicleOptions,
+                });
+
+                // Forward state events up to the parent
+                childRunner.on('state', (e) => this.emit('state', e));
+
+                return childRunner.run();
+              },
             });
 
             this.cache?.set(this.name, cacheKey, JSON.stringify(output));
@@ -241,7 +275,7 @@ export class DagNodeRunner<
 
           if (this.state !== 'cancelled') {
             sendEvent('dag:node_finish', { output });
-            this.state = 'finished';
+            this.setState('finished');
             this.result = { type: 'success', output };
             this.emit('finish', { name: this.name, output });
           }
@@ -250,7 +284,7 @@ export class DagNodeRunner<
             // Don't emit an error if we were cancelled
           } else {
             let err = e as Error;
-            this.state = 'error';
+            this.setState('error');
             this.result = { type: 'error', error: e as Error };
             sendEvent('dag:node_error', { error: e });
             this.emit('error', e as Error);

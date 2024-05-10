@@ -40,6 +40,7 @@ function mockRunner(name: string, output: any, fail = false) {
         return output;
       },
     },
+    rootInput: {},
     context: {} as any,
     eventCb: () => {},
   });
@@ -52,6 +53,7 @@ test('no parents', async () => {
     name: 'node',
     dagName: 'node',
     config: { run: ({ context }) => context.value + 1 },
+    rootInput: {},
     context: { value: 1 },
     eventCb: () => {},
   });
@@ -77,6 +79,7 @@ test('single parent', async () => {
   let runner = new DagNodeRunner({
     name: 'node',
     dagName: 'node',
+    rootInput: {},
     config: { parents: ['parent'], run: ({ context, input }) => input.parent + context.value + 1 },
     context: { value: 1 },
     eventCb: () => {},
@@ -113,6 +116,7 @@ test('multiple parents', async () => {
       run: async ({ context, input }) =>
         input.parent1 + input.parent2 + input.parent3 + input.parent4 + context.value,
     },
+    rootInput: {},
     context: { value: 10 },
     eventCb: () => {},
   });
@@ -148,6 +152,7 @@ test('parent failed when errors are not tolerated', async () => {
       parents: ['successParent', 'failParent'],
       run: async () => 1,
     },
+    rootInput: {},
     context: { value: 10 },
     eventCb: () => {},
   });
@@ -187,6 +192,7 @@ test('tolerate parent errors', async () => {
         return input.successParent + (input.failParent ?? 0) + 1;
       },
     },
+    rootInput: {},
     context: { value: 10 },
     eventCb: () => {},
   });
@@ -219,6 +225,7 @@ test('tolerate parent errors, when all parents error', async () => {
         return (input.failParent1 ?? 0) + (input.failParent2 ?? 0) + 2;
       },
     },
+    rootInput: {},
     context: { value: 10 },
     eventCb: () => {},
   });
@@ -236,6 +243,45 @@ test('tolerate parent errors, when all parents error', async () => {
   expect(runner.state).toBe('finished');
   expect(runner.result).toEqual({ type: 'success', output: 2 });
   expect(finished()).toBe(true);
+});
+
+test('manual run', async () => {
+  let parent = mockRunner('parent', 2);
+  let runner = new DagNodeRunner({
+    name: 'node',
+    dagName: 'node',
+    rootInput: {},
+    config: { parents: ['parent'], run: ({ context, input }) => input.parent + context.value + 1 },
+    context: { value: 1 },
+    eventCb: () => {},
+    autorun: () => false,
+  });
+
+  const { promise, finished } = outputCatcher(runner);
+
+  runner.init([parent], new EventEmitter());
+
+  // should be waiting before we started trying to run it
+  expect(runner.state).toBe('waiting');
+  expect(finished()).toBe(false);
+
+  // Try to run without parent being ready
+  let ranAtStart = await runner.run();
+  expect(ranAtStart).toBe(false);
+  expect(runner.state).toBe('waiting');
+  expect(finished()).toBe(false);
+
+  // The parent runs, but since autorun is off, our test node should be ready, but not run yet.
+  await parent.run();
+  expect(runner.state).toBe('ready');
+  expect(finished()).toBe(false);
+
+  let ranAfterParent = await runner.run();
+  expect(ranAfterParent).toBe(true);
+  let result = await promise;
+  expect(result).toEqual({ name: 'node', output: 4 });
+  expect(runner.state).toBe('finished');
+  expect(runner.result).toEqual({ type: 'success', output: 4 });
 });
 
 test.todo('exitIfCancelled', async () => {});
