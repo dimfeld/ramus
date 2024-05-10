@@ -1,9 +1,9 @@
 import { test, expect } from 'bun:test';
 import { EventEmitter } from 'events';
 import { DagNodeRunner } from './node_runner';
-import { Semaphore } from '../semaphore';
+import { LocalSemaphore } from '../semaphore';
 
-function outputCatcher(runner: DagNodeRunner<any, any, any>) {
+function outputCatcher(runner: DagNodeRunner<any, any, any, any>) {
   let finished = false;
   const promise = new Promise((resolve, reject) => {
     runner.on('finish', (d) => {
@@ -286,7 +286,7 @@ test('manual run', async () => {
 });
 
 test('with semaphores', async () => {
-  let semaphore = new Semaphore({ key: 0 });
+  let semaphore = new LocalSemaphore({ key: 0 });
   let ran = false;
   let runner = new DagNodeRunner({
     name: 'node',

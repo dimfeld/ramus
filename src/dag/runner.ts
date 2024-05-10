@@ -50,6 +50,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> extends EventE
     eventCb,
     cache,
     autorun,
+    semaphores,
   }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT>) {
     super();
     if (!(dag instanceof CompiledDag)) {
@@ -69,6 +70,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> extends EventE
       eventCb: this.eventCb,
       cache,
       autorun,
+      semaphores,
     });
 
     this.name = dag.config.name;

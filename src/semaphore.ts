@@ -1,10 +1,16 @@
+export interface Semaphore {
+  acquire(key: string): Promise<void>;
+  release(key: string): void | Promise<void>;
+  run<T>(key: string, f: () => Promise<T>): Promise<T>;
+}
+
 interface SemaphoreClass {
   limit: number;
   current: number;
   pending: Array<() => void>;
 }
 
-export class Semaphore {
+export class LocalSemaphore implements Semaphore {
   counts = new Map<string, SemaphoreClass>();
 
   constructor(limits: Record<string, number>) {
@@ -31,8 +37,10 @@ export class Semaphore {
   }
 
   /** Acquire a slot in the semaphore. Returns a promise that resolves when the slot is available.
-   * These slots will not automatically release; you must call `release` with the same key when done.
-   * You can use the `run` function instead to automatically manage the acquisition and release of the slot. */
+   * These slots will not automatically release; you must call `release` with the same key when done, even if your
+   * code throws an error.
+   *
+   * You can use the `run` function instead to automatically manage the acquisition and release of the semaphore. */
   async acquire(key: string) {
     let value = this.counts.get(key);
     if (!value) {

@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
-import { Semaphore } from './semaphore.js';
+import { LocalSemaphore } from './semaphore.js';
 
 test('run without wait', async () => {
-  let semaphore = new Semaphore({ key: 1 });
+  let semaphore = new LocalSemaphore({ key: 1 });
 
   let ran = false;
   await semaphore.run('key', async () => {
@@ -13,7 +13,7 @@ test('run without wait', async () => {
 });
 
 test('run with wait', async () => {
-  let semaphore = new Semaphore({ key: 1 });
+  let semaphore = new LocalSemaphore({ key: 1 });
   await semaphore.acquire('key');
 
   let ran = false;
@@ -40,7 +40,7 @@ test('parallelism', async () => {
     counter--;
   }
 
-  let semaphore = new Semaphore({ key: 50 });
+  let semaphore = new LocalSemaphore({ key: 50 });
 
   let promises = Promise.all(
     Array.from({ length: 200 }, (_, i) =>
@@ -59,14 +59,14 @@ test('parallelism', async () => {
 });
 
 test('unknown key', async () => {
-  let semaphore = new Semaphore({ key: 1 });
+  let semaphore = new LocalSemaphore({ key: 1 });
 
   await semaphore.acquire('otherKey');
   semaphore.release('otherKey');
 });
 
 test('extra release leaves count at 0', async () => {
-  let semaphore = new Semaphore({ key: 1 });
+  let semaphore = new LocalSemaphore({ key: 1 });
   semaphore.release('key');
   expect(semaphore.counts.get('key')?.current).toBe(0);
 });
