@@ -74,3 +74,7 @@ export type DagConfiguration<CONTEXT extends object, ROOTINPUT> = Record<
 >;
 
 export type DagOutput<NODE> = NODE extends DagNode<any, any, any, infer OUTPUT> ? OUTPUT : never;
+
+export type DagInputs<T extends Record<string, DagNode<any, any, any, any>>> = {
+  [k in keyof T]: DagOutput<T[k]>;
+};

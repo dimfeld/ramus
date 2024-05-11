@@ -42,6 +42,7 @@
     "json-stable-stringify": "^1.1.1",
     "ky": "^1.2.4",
     "wtf-plugin-disambig": "^1.0.0",
+    "wtf-plugin-markdown": "^1.0.1",
     "wtf_wikipedia": "^10.3.0",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.23.0"

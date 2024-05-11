@@ -1,10 +1,13 @@
-export * from './brave_search.js';
+export { braveWebSearchTool } from './brave_search.js';
+export { wikipediaTool, wikipediaInfoboxTool } from './wikipedia.js';
+
 import type { Schema } from 'jsonschema';
 
-export interface ToolConfig {
+export interface ToolConfig<OUTPUT> {
   name: string;
   description: string;
   schema: Schema;
-  // TODO need to define some output
-  run(input: any): Promise<any>;
+  run(input: any): Promise<OUTPUT>;
+  /** Format the output as text for passing to a model */
+  asText(value: OUTPUT): string;
 }

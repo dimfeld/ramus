@@ -1,4 +1,5 @@
 import ky from 'ky';
+import { ToolConfig } from './index.js';
 
 export interface ContactPoint {
   type: 'contact_point';
@@ -103,6 +104,10 @@ export interface QueryResult {
 export interface SearchResult {
   type: 'search_result';
   subtype: 'generic';
+  title: string;
+  url: string;
+  description: string;
+
   deep_results: DeepResult;
   // ??
   schemas: object[];
@@ -208,4 +213,30 @@ export async function braveSearch(options: BraveSearchOptions): Promise<BraveSea
   result.__tool_source = 'brave_search';
 
   return result;
+}
+
+export function braveWebSearchTool(options?: BraveSearchOptions): ToolConfig<BraveSearchResponse> {
+  return {
+    name: 'Brave Web Search',
+    description: 'Search the web using Brave search',
+    schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search the web for this query',
+        },
+      },
+    },
+    run({ query }: { query: string }) {
+      return braveSearch({ ...options, query, apiKey: options?.apiKey ?? BRAVE_SEARCH_API_KEY });
+    },
+    asText(value: BraveSearchResponse) {
+      return value.web.results
+        .flatMap((result, i) => {
+          return [`${i}. [${result.title}](${result.url})`, result.description || '', ''];
+        })
+        .join('\n');
+    },
+  };
 }
