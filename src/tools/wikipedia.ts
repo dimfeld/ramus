@@ -47,12 +47,13 @@ export async function getWikipediaInfoBox(title: string) {
   return doc?.infobox()?.keyValue();
 }
 
-export function wikipediaTool(): ToolConfig<Document | undefined> {
+export function wikipediaTool(): ToolConfig<{ title: string }, Document | undefined> {
   return {
     name: 'Wikipedia',
     description: 'Search Wikipedia',
     schema: {
       type: 'object',
+      required: ['title'],
       properties: {
         title: {
           type: 'string',
@@ -70,12 +71,13 @@ export function wikipediaTool(): ToolConfig<Document | undefined> {
   };
 }
 
-export function wikipediaInfoboxTool(): ToolConfig<Record<string, string>> {
+export function wikipediaInfoboxTool(): ToolConfig<{ title: string }, Record<string, string>> {
   return {
     name: 'Wikipedia Infobox',
     description: 'Get infobox data from Wikipedia',
     schema: {
       type: 'object',
+      required: ['title'],
       properties: {
         title: {
           type: 'string',
@@ -125,7 +127,7 @@ const infoboxKeyMap: Record<string, string | null> = {
   founded: 'Founded',
   founders: 'Founders',
   foundation: 'Year Founded',
-  location: 'Address',
+  location: 'Location',
   location_city: 'City',
   location_country: 'Location',
   area_served: 'Area served',

@@ -215,12 +215,15 @@ export async function braveSearch(options: BraveSearchOptions): Promise<BraveSea
   return result;
 }
 
-export function braveWebSearchTool(options?: BraveSearchOptions): ToolConfig<BraveSearchResponse> {
+export function braveWebSearchTool(
+  options?: BraveSearchOptions
+): ToolConfig<{ query: string }, BraveSearchResponse> {
   return {
     name: 'Brave Web Search',
     description: 'Search the web using Brave search',
     schema: {
       type: 'object',
+      required: ['query'],
       properties: {
         query: {
           type: 'string',
