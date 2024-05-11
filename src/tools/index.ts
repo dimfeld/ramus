@@ -1,4 +1,5 @@
 export { braveWebSearchTool } from './brave_search.js';
+export { fetchAndExtractTool, extractTool } from './extract_article.js';
 export { wikipediaTool, wikipediaInfoboxTool } from './wikipedia.js';
 
 import type { Schema } from 'jsonschema';
