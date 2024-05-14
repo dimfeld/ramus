@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
@@ -8,6 +9,7 @@ import { WorkflowEventCallback } from '../events.js';
 import { calculateCacheKey, type NodeResultCache } from '../cache.js';
 import { DagRunner } from './runner.js';
 import { Semaphore } from '../semaphore.js';
+import { Intervention } from '../interventions.js';
 
 export class NodeCancelledError extends Error {
   name = 'CancelledError';
@@ -30,10 +32,12 @@ export interface DagNodeRunnerOptions<
   ROOTINPUT,
   INPUTS extends AnyInputs,
   OUTPUT,
+  INTERVENTIONDATA = unknown,
+  INTERVENTIONRESPONSE = unknown,
 > {
   name: string;
   dagName: string;
-  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
+  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
   context: CONTEXT;
   /** External input passed when running the DAG */
   rootInput: ROOTINPUT;
@@ -49,15 +53,18 @@ export class DagNodeRunner<
   ROOTINPUT,
   INPUTS extends AnyInputs,
   OUTPUT,
+  INTERVENTIONDATA = unknown,
+  INTERVENTIONRESPONSE = unknown,
 > extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];
+  intervention: [Intervention<INTERVENTIONDATA>];
   finish: [{ name: string; output: OUTPUT }];
   error: [Error];
   parentError: [];
 }> {
   name: string;
   dagName: string;
-  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
+  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
   context: CONTEXT;
   state: DagNodeState;
   cache?: NodeResultCache;
@@ -83,7 +90,14 @@ export class DagNodeRunner<
     eventCb,
     autorun,
     semaphores,
-  }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
+  }: DagNodeRunnerOptions<
+    CONTEXT,
+    ROOTINPUT,
+    INPUTS,
+    OUTPUT,
+    INTERVENTIONDATA,
+    INTERVENTIONRESPONSE
+  >) {
     super();
     this.name = name;
     this.dagName = dagName;
@@ -109,7 +123,14 @@ export class DagNodeRunner<
    *  concession to simplify making sure that all the parent node runners have been created first.
    **/
   init(
-    parents: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>[],
+    parents: DagNodeRunner<
+      CONTEXT,
+      ROOTINPUT,
+      AnyInputs,
+      unknown,
+      INTERVENTIONDATA,
+      INTERVENTIONRESPONSE
+    >[],
     cancel: EventEmitter<{ cancel: [] }>
   ) {
     let parentSpan = opentelemetry.trace.getActiveSpan();
@@ -159,9 +180,17 @@ export class DagNodeRunner<
     }
   }
 
-  async run(triggeredFromParentFinished = false): Promise<boolean> {
+  readyToRun() {
+    return this.state === 'waiting' || this.state === 'ready' || this.state === 'intervention';
+  }
+
+  async run(
+    triggeredFromParentFinished = false,
+    interventionResponse?: INTERVENTIONRESPONSE
+  ): Promise<boolean> {
+    const ready = this.readyToRun();
     if (triggeredFromParentFinished) {
-      if (this.waiting.size > 0 || (this.state !== 'waiting' && this.state !== 'ready')) {
+      if (this.waiting.size > 0 || !ready) {
         // Not ready to execute yet
         return false;
       }
@@ -172,8 +201,8 @@ export class DagNodeRunner<
       }
     } else {
       // We were manually told to run, but this node is still waiting for some parent input,
-      // or we're currently running, so we can't execute yet
-      if (this.waiting.size > 0 || this.state === 'running') {
+      // or we're currently running, so we can't execute.
+      if (this.waiting.size > 0 || !(ready || this.state === 'error')) {
         return false;
       }
     }
@@ -204,113 +233,129 @@ export class DagNodeRunner<
       });
     };
 
+    const parentContext = this.parentSpanContext ?? opentelemetry.context.active();
+    if (this.config.requiresIntervention) {
+      let intervention = this.config.requiresIntervention({
+        context: this.context,
+        input: this.inputs as INPUTS,
+        rootInput: this.rootInput,
+        response: interventionResponse,
+      });
+
+      if (intervention) {
+        this.setState('intervention');
+        sendEvent('dag:node_intervention', intervention);
+        this.emit('intervention', { ...intervention, id: randomUUID() });
+        return false;
+      }
+    }
+
     const semaphoreKey = this.config.semaphoreKey;
 
     try {
-      if (semaphoreKey && this.semaphores?.length) {
-        this.setState('pendingSemaphore');
-        await Promise.all(this.semaphores.map((s) => s.acquire(semaphoreKey)) ?? []);
-      }
-
-      this.setState('running');
-      await tracer.startActiveSpan(
-        step,
-        {},
-        this.parentSpanContext ?? opentelemetry.context.active(),
-        async (span) => {
-          try {
-            sendEvent('dag:node_start', { input: this.inputs });
-            if (this.config.parents) {
-              span.setAttribute('dag.node.parents', this.config.parents.join(', '));
-            }
-
-            for (let [k, v] of Object.entries(this.inputs)) {
-              span.setAttribute(`dag.node.input.${k}`, toSpanAttributeValue(v));
-            }
-
-            let output: OUTPUT;
-
-            const cacheKey = this.cache
-              ? calculateCacheKey(this.config.run, this.inputs, this.rootInput)
-              : '';
-            const cachedValue = await this.cache?.get(this.name, cacheKey);
-
-            if (cachedValue) {
-              output = JSON.parse(cachedValue) as OUTPUT;
-              span.setAttribute('dag:cache_hit', true);
-            } else {
-              output = await this.config.run({
-                input: this.inputs as INPUTS,
-                rootInput: this.rootInput,
-                context: this.context,
-                span,
-                chronicleOptions,
-                event: (type, data, spanEvent = true) => {
-                  if (spanEvent && data != null && span.isRecording()) {
-                    const spanData = Object.fromEntries(
-                      Object.entries(data).map(([k, v]) => [k, toSpanAttributeValue(v)])
-                    );
-
-                    span.addEvent(type, spanData);
-                  }
-
-                  sendEvent(type, data);
-                },
-                isCancelled: () => this.state === 'cancelled',
-                exitIfCancelled: () => {
-                  if (this.state === 'cancelled') {
-                    throw new NodeCancelledError();
-                  }
-                },
-                runDag: (options) => {
-                  let childRunner = new DagRunner({
-                    ...options,
-                    autorun: this.autorun,
-                    eventCb: this.eventCb,
-                    chronicle: chronicleOptions,
-                  });
-
-                  // Forward state events up to the parent
-                  childRunner.on('state', (e) => this.emit('state', e));
-
-                  return childRunner.run();
-                },
-              });
-
-              this.cache?.set(this.name, cacheKey, JSON.stringify(output));
-            }
-
-            span.setAttribute(
-              `dag.node.output.${this.name}`,
-              toSpanAttributeValue(output as object | AttributeValue)
-            );
-
-            if (this.state !== 'cancelled') {
-              sendEvent('dag:node_finish', { output });
-              this.setState('finished');
-              this.result = { type: 'success', output };
-              this.emit('finish', { name: this.name, output });
-            }
-          } catch (e) {
-            if (e instanceof NodeCancelledError) {
-              // Don't emit an error if we were cancelled
-            } else {
-              let err = e as Error;
-              this.setState('error');
-              this.result = { type: 'error', error: e as Error };
-              sendEvent('dag:node_error', { error: e });
-              this.emit('error', e as Error);
-
-              span.recordException(err);
-              span.setAttribute('error', err?.message ?? 'true');
-              span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
-            }
-          } finally {
-            span.setAttribute('dag.node.finishState', this.state);
-            span.end();
-          }
+      await tracer.startActiveSpan(step, {}, parentContext, async (span) => {
+        if (semaphoreKey && this.semaphores?.length) {
+          this.setState('pendingSemaphore');
+          await tracer.startActiveSpan(
+            step + 'acquire semaphores',
+            { attributes: { semaphoreKey } },
+            () => Promise.all(this.semaphores!.map((s) => s.acquire(semaphoreKey)) ?? [])
+          );
         }
-      );
+
+        this.setState('running');
+        try {
+          sendEvent('dag:node_start', { input: this.inputs });
+          if (this.config.parents) {
+            span.setAttribute('dag.node.parents', this.config.parents.join(', '));
+          }
+
+          for (let [k, v] of Object.entries(this.inputs)) {
+            span.setAttribute(`dag.node.input.${k}`, toSpanAttributeValue(v));
+          }
+
+          let output: OUTPUT;
+
+          const cacheKey = this.cache
+            ? calculateCacheKey(this.config.run, this.inputs, this.rootInput)
+            : '';
+          const cachedValue = await this.cache?.get(this.name, cacheKey);
+
+          if (cachedValue) {
+            output = JSON.parse(cachedValue) as OUTPUT;
+            span.setAttribute('dag:cache_hit', true);
+          } else {
+            output = await this.config.run({
+              input: this.inputs as INPUTS,
+              rootInput: this.rootInput,
+              context: this.context,
+              span,
+              chronicleOptions,
+              event: (type, data, spanEvent = true) => {
+                if (spanEvent && data != null && span.isRecording()) {
+                  const spanData = Object.fromEntries(
+                    Object.entries(data).map(([k, v]) => [k, toSpanAttributeValue(v)])
+                  );
+
+                  span.addEvent(type, spanData);
+                }
+
+                sendEvent(type, data);
+              },
+              isCancelled: () => this.state === 'cancelled',
+              exitIfCancelled: () => {
+                if (this.state === 'cancelled') {
+                  throw new NodeCancelledError();
+                }
+              },
+              runDag: (options) => {
+                let childRunner = new DagRunner({
+                  ...options,
+                  autorun: this.autorun,
+                  eventCb: this.eventCb,
+                  chronicle: chronicleOptions,
+                });
+
+                // Forward state events up to the parent
+                childRunner.on('state', (e) => this.emit('state', e));
+
+                return childRunner.run();
+              },
+            });
+
+            this.cache?.set(this.name, cacheKey, JSON.stringify(output));
+          }
+
+          span.setAttribute(
+            `dag.node.output.${this.name}`,
+            toSpanAttributeValue(output as object | AttributeValue)
+          );
+
+          if (this.state !== 'cancelled') {
+            sendEvent('dag:node_finish', { output });
+            this.setState('finished');
+            this.result = { type: 'success', output };
+            this.emit('finish', { name: this.name, output });
+          }
+        } catch (e) {
+          if (e instanceof NodeCancelledError) {
+            // Don't emit an error if we were cancelled
+          } else {
+            let err = e as Error;
+            this.setState('error');
+            this.result = { type: 'error', error: e as Error };
+            sendEvent('dag:node_error', { error: e });
+            this.emit('error', e as Error);
+
+            span.recordException(err);
+            span.setAttribute('error', err?.message ?? 'true');
+            span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
+          }
+        } finally {
+          span.setAttribute('dag.node.finishState', this.state);
+          span.end();
+        }
+      });
     } finally {
       if (semaphoreKey && this.semaphores) {
         for (let sem of this.semaphores) {

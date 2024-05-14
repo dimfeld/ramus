@@ -7,9 +7,18 @@ import { DagNodeRunner } from './node_runner.js';
 import { runInSpan } from '../tracing.js';
 import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
+import { Intervention } from '../interventions.js';
 
-export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = unknown> {
-  dag: Dag<CONTEXT, ROOTINPUT> | CompiledDag<CONTEXT, ROOTINPUT, OUTPUT>;
+export interface DagRunnerOptions<
+  CONTEXT extends object,
+  ROOTINPUT,
+  OUTPUT = unknown,
+  INTERVENTIONDATA = unknown,
+  INTERVENTIONRESPONSE = unknown,
+> {
+  dag:
+    | Dag<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>
+    | CompiledDag<CONTEXT, ROOTINPUT, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
   input: ROOTINPUT;
   cache?: NodeResultCache;
   context?: CONTEXT;
@@ -27,18 +36,39 @@ export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = un
 
 function noop() {}
 
-export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> extends EventEmitter<{
+export class DagRunner<
+  CONTEXT extends object,
+  ROOTINPUT,
+  OUTPUT,
+  INTERVENTIONDATA = unknown,
+  INTERVENTIONRESPONSE = unknown,
+> extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];
+  intervention: [Intervention<INTERVENTIONDATA>];
 }> {
   name: string;
   context?: CONTEXT;
-  runners: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>[];
-  outputNode: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>;
+  runners: Map<
+    string,
+    DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, any, INTERVENTIONDATA, INTERVENTIONRESPONSE>
+  >;
+  outputNode: DagNodeRunner<
+    CONTEXT,
+    ROOTINPUT,
+    AnyInputs,
+    OUTPUT,
+    INTERVENTIONDATA,
+    INTERVENTIONRESPONSE
+  >;
   tolerateFailures: boolean;
   chronicleOptions?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
   autorun: () => boolean;
   input: ROOTINPUT;
+  output: OUTPUT | undefined;
+
+  requestedInterventions: Map<string, { data: Intervention<INTERVENTIONDATA>; node: string }> =
+    new Map();
 
   cancel: EventEmitter<{ cancel: [] }>;
 
@@ -51,7 +81,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> extends EventE
     cache,
     autorun,
     semaphores,
-  }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT>) {
+  }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>) {
     super();
     if (!(dag instanceof CompiledDag)) {
       dag = new CompiledDag(dag);
@@ -93,9 +123,13 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> extends EventE
           meta: this.chronicleOptions?.defaults?.metadata,
         });
 
-        for (let runner of this.runners) {
+        for (let runner of this.runners.values()) {
           // State events are just for the UI when the DAG is being actively monitored.
           runner.on('state', (e) => this.emit('state', e));
+          runner.on('intervention', (e) => {
+            this.requestedInterventions.set(e.id, { data: e, node: runner.name });
+            this.emit('intervention', e);
+          });
 
           if (!this.tolerateFailures) {
             runner.on('error', (e) => {
@@ -127,12 +161,13 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> extends EventE
             meta: this.chronicleOptions?.defaults?.metadata,
           });
 
+          this.output = e.output;
           resolve(e.output);
         });
 
         // Start running all root nodes
         if (this.autorun()) {
-          for (let runner of this.runners) {
+          for (let runner of this.runners.values()) {
             if (!runner.config.parents?.length) {
               runner.run();
             }
@@ -140,6 +175,21 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT> extends EventE
         }
       });
     });
+  }
+
+  respondToIntervention(id: string, response: INTERVENTIONRESPONSE) {
+    const intervention = this.requestedInterventions.get(id);
+    if (!intervention) {
+      throw new Error('Intervention id not found');
+    }
+
+    this.requestedInterventions.delete(id);
+    const runner = this.runners.get(intervention.node);
+    if (!runner) {
+      throw new Error(`Node runner ${intervention.node} not found`);
+    }
+
+    return runner.run(false, response);
   }
 }
 

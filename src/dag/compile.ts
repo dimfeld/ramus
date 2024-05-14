@@ -7,7 +7,7 @@ import type { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 
 /** @internal Analyze some parts of the DAG. This is only exported for testing and isn't useful on its own. */
-export function analyzeDag(dag: Record<string, DagNode<any, any, any, any>>) {
+export function analyzeDag(dag: Record<string, DagNode<any, any, any, any, any, any>>) {
   // Start with all nodes potentially being leaf nodes and then exclude them as we go.
   const leafNodes = new Set<string>(Object.keys(dag));
 
@@ -42,8 +42,14 @@ export function analyzeDag(dag: Record<string, DagNode<any, any, any, any>>) {
   };
 }
 
-interface NamedDagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs, OUTPUT>
-  extends DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT> {
+interface NamedDagNode<
+  CONTEXT extends object,
+  ROOTINPUT,
+  INPUTS extends AnyInputs,
+  OUTPUT,
+  INTERVENTIONDATA,
+  INTERVENTIONRESPONSE,
+> extends DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE> {
   name: string;
 }
 
@@ -57,12 +63,25 @@ export interface BuildRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   autorun?: () => boolean;
 }
 
-export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
-  config: Dag<CONTEXT, ROOTINPUT>;
+export class CompiledDag<
+  CONTEXT extends object,
+  ROOTINPUT,
+  OUTPUT,
+  INTERVENTIONDATA = unknown,
+  INTERVENTIONRESPONSE = unknown,
+> {
+  config: Dag<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
   info: ReturnType<typeof analyzeDag>;
 
-  namedNodes: NamedDagNode<CONTEXT, ROOTINPUT, AnyInputs, unknown>[];
-  constructor(dag: Dag<CONTEXT, ROOTINPUT>) {
+  namedNodes: NamedDagNode<
+    CONTEXT,
+    ROOTINPUT,
+    AnyInputs,
+    unknown,
+    INTERVENTIONDATA,
+    INTERVENTIONRESPONSE
+  >[];
+  constructor(dag: Dag<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>) {
     this.config = dag;
     this.info = analyzeDag(dag.nodes);
     this.namedNodes = Object.entries(dag.nodes).map(([name, node]) => ({
@@ -86,12 +105,22 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
   }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
     const cancel = new EventEmitter<{ cancel: [] }>();
 
-    let nodes = new Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>>();
+    let nodes = new Map<
+      string,
+      DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown, INTERVENTIONDATA, INTERVENTIONRESPONSE>
+    >();
 
     context = context ?? this.config.context();
 
     for (let node of this.namedNodes) {
-      const runner = new DagNodeRunner({
+      const runner = new DagNodeRunner<
+        CONTEXT,
+        ROOTINPUT,
+        AnyInputs,
+        unknown,
+        INTERVENTIONDATA,
+        INTERVENTIONRESPONSE
+      >({
         name: node.name,
         dagName: this.config.name,
         config: node,
@@ -113,7 +142,14 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
 
     let leafRunners = this.info.leafNodes.map((name) => nodes.get(name)!);
 
-    const outputNode = new DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>({
+    const outputNode = new DagNodeRunner<
+      CONTEXT,
+      ROOTINPUT,
+      AnyInputs,
+      OUTPUT,
+      INTERVENTIONDATA,
+      INTERVENTIONRESPONSE
+    >({
       name: '__output',
       dagName: this.config.name,
       config: {
@@ -139,7 +175,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     outputNode.init(leafRunners, cancel);
 
     return {
-      runners: [...nodes.values()],
+      runners: nodes,
       outputNode,
       cancel,
     };
