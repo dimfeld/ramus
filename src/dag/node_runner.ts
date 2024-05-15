@@ -32,7 +32,7 @@ export interface DagNodeRunnerOptions<
   ROOTINPUT,
   INPUTS extends AnyInputs,
   OUTPUT,
-  INTERVENTIONDATA = unknown,
+  INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > {
   name: string;
@@ -53,7 +53,7 @@ export class DagNodeRunner<
   ROOTINPUT,
   INPUTS extends AnyInputs,
   OUTPUT,
-  INTERVENTIONDATA = unknown,
+  INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];
@@ -244,8 +244,9 @@ export class DagNodeRunner<
 
       if (intervention) {
         this.setState('intervention');
-        sendEvent('dag:node_intervention', intervention);
-        this.emit('intervention', { ...intervention, id: randomUUID() });
+        const withId = { ...intervention, id: randomUUID() } as Intervention<INTERVENTIONDATA>;
+        sendEvent('dag:node_intervention', withId);
+        this.emit('intervention', withId);
         return false;
       }
     }
@@ -289,6 +290,7 @@ export class DagNodeRunner<
               input: this.inputs as INPUTS,
               rootInput: this.rootInput,
               context: this.context,
+              interventionResponse,
               span,
               chronicleOptions,
               event: (type, data, spanEvent = true) => {

@@ -1,7 +1,8 @@
-import { test, expect } from 'bun:test';
+import { test, describe, expect } from 'bun:test';
 import { EventEmitter } from 'events';
 import { DagNodeRunner } from './node_runner';
 import { LocalSemaphore } from '../semaphore';
+import { Intervention } from '../interventions';
 
 function outputCatcher(runner: DagNodeRunner<any, any, any, any>) {
   let finished = false;
@@ -331,3 +332,143 @@ test.todo('cancel before run', async () => {});
 test.todo('cancel during run', async () => {});
 
 test.todo('cancel after finish', async () => {});
+
+describe('interventions', () => {
+  test('at root', async () => {
+    let runner = new DagNodeRunner({
+      name: 'node',
+      dagName: 'node',
+      rootInput: {},
+      config: {
+        requiresIntervention: ({ context, input, response }) => {
+          if (response) {
+            return;
+          }
+
+          return {
+            source: 'Question Asker',
+            message: `What is the number?`,
+          };
+        },
+        run: ({ context, interventionResponse }) => context.value + interventionResponse + 1,
+      },
+      context: { value: 1 },
+      eventCb: () => {},
+    });
+    const { promise, finished } = outputCatcher(runner);
+
+    runner.init([], new EventEmitter());
+    let caughtIntervention: Intervention | undefined;
+    runner.on('intervention', (i) => (caughtIntervention = i));
+
+    let firstRan = await runner.run(false);
+    expect(firstRan).toBe(false);
+    expect(finished()).toBe(false);
+    expect(runner.state).toBe('intervention');
+
+    expect(caughtIntervention?.message).toBe('What is the number?');
+    expect(caughtIntervention?.source).toBe('Question Asker');
+
+    let ran = await runner.run(false, 3);
+    expect(ran).toBe(true);
+    let result = await promise;
+    expect(result).toEqual({ name: 'node', output: 5 });
+    expect(runner.state).toBe('finished');
+    expect(runner.result).toEqual({ type: 'success', output: 5 });
+  });
+
+  test('in middle of chain', async () => {
+    let parent = mockRunner('parent', 2);
+    let runner = new DagNodeRunner({
+      name: 'node',
+      dagName: 'node',
+      rootInput: {},
+      config: {
+        parents: ['parent'],
+        requiresIntervention: ({ context, input, response }) => {
+          if (response) {
+            return;
+          }
+
+          return {
+            source: 'Question Asker',
+            message: `What is ${input.parent}?`,
+          };
+        },
+        run: ({ context, input, interventionResponse }) =>
+          input.parent + context.value + interventionResponse + 1,
+      },
+      context: { value: 1 },
+      eventCb: () => {},
+    });
+    const { promise, finished } = outputCatcher(runner);
+
+    runner.init([parent], new EventEmitter());
+    let caughtIntervention: Intervention | undefined;
+    runner.on('intervention', (i) => (caughtIntervention = i));
+
+    await parent.run();
+
+    expect(finished()).toBe(false);
+    expect(runner.state).toBe('intervention');
+
+    expect(caughtIntervention?.message).toBe('What is 2?');
+    expect(caughtIntervention?.source).toBe('Question Asker');
+
+    let ran = await runner.run(false, 3);
+    expect(ran).toBe(true);
+    let result = await promise;
+    expect(result).toEqual({ name: 'node', output: 7 });
+    expect(runner.state).toBe('finished');
+    expect(runner.result).toEqual({ type: 'success', output: 7 });
+  });
+
+  test('checks intervention before acquiring semaphores', async () => {
+    let semaphore = new LocalSemaphore({ key: 0 });
+    let runner = new DagNodeRunner({
+      name: 'node',
+      dagName: 'node',
+      rootInput: {},
+      semaphores: [semaphore],
+      config: {
+        semaphoreKey: 'key',
+        requiresIntervention: ({ context, input, response }) => {
+          if (response) {
+            return;
+          }
+
+          return {
+            source: 'Question Asker',
+            message: `What is the number?`,
+          };
+        },
+        run: ({ context, interventionResponse }) => context.value + interventionResponse + 1,
+      },
+      context: { value: 1 },
+      eventCb: () => {},
+    });
+    const { finished } = outputCatcher(runner);
+
+    runner.init([], new EventEmitter());
+    let caughtIntervention: Intervention | undefined;
+    runner.on('intervention', (i) => (caughtIntervention = i));
+
+    let firstRan = await runner.run(false);
+    expect(firstRan).toBe(false);
+    expect(finished()).toBe(false);
+    expect(runner.state).toBe('intervention');
+    expect(caughtIntervention).toBeTruthy();
+
+    semaphore.setLimit('key', 1);
+
+    // run again, without an intervention response.
+    await runner.run(false);
+    expect(finished()).toBe(false);
+    expect(runner.state).toBe('intervention');
+
+    await runner.run(false, 3);
+    expect(finished()).toBe(true);
+    expect(runner.state).toBe('finished');
+    expect(runner.result).toEqual({ type: 'success', output: 5 });
+  });
+});

@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 
 import { DagRunner, runDag } from './runner.js';
 import { Dag, DagConfiguration } from './types.js';
+import { Intervention } from '../interventions.js';
 
 interface Context {
   ctxValue: number;
@@ -201,4 +202,76 @@ test('node error when not tolerating failures', async () => {
   await expect(runDag({ dag, input: undefined, context: { ctxValue: 5 } })).rejects.toThrowError(
     'failure'
   );
+});
+
+test('interventions', async () => {
+  const nodes: DagConfiguration<Context, number> = {
+    root: {
+      run: async ({ context }) => {
+        return context.ctxValue + 1;
+      },
+    },
+    intone: {
+      parents: ['root'],
+      requiresIntervention: ({ input, response }) => {
+        if (!response) {
+          return {
+            message: 'A Question',
+            source: 'intone',
+          };
+        }
+      },
+      run: async ({ input, interventionResponse }) => {
+        return input.root + interventionResponse + 1;
+      },
+    },
+    inttwo: {
+      parents: ['root'],
+      requiresIntervention: ({ input, response }) => {
+        if (!response) {
+          return {
+            message: 'A Question',
+            source: 'inttwo',
+          };
+        }
+      },
+      run: async ({ input, interventionResponse }) => {
+        return input.root + interventionResponse + 1;
+      },
+    },
+    collector: {
+      parents: ['intone', 'inttwo'],
+      run: async ({ input, rootInput }) => {
+        return input.intone + input.inttwo + rootInput;
+      },
+    },
+  };
+
+  const dag: Dag<Context, number> = {
+    name: 'test',
+    context: () => ({ ctxValue: 5 }),
+    nodes,
+  };
+
+  const runner = new DagRunner({
+    dag,
+    input: 1,
+  });
+
+  let seenInterventions: Intervention[] = [];
+
+  runner.on('intervention', (i) => {
+    seenInterventions.push(i);
+    setTimeout(() => {
+      runner.respondToIntervention(i.id, 20);
+    }, 5);
+  });
+
+  let result = await runner.run();
+  expect(result).toBe(55);
+
+  expect(seenInterventions.some((s) => s.source === 'intone')).toBe(true);
+  expect(seenInterventions.some((s) => s.source === 'inttwo')).toBe(true);
+  // Nothing should be waiting.
+  expect(runner.requestedInterventions.size).toBe(0);
 });

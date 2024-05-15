@@ -13,7 +13,7 @@ export interface DagRunnerOptions<
   CONTEXT extends object,
   ROOTINPUT,
   OUTPUT = unknown,
-  INTERVENTIONDATA = unknown,
+  INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > {
   dag:
@@ -40,7 +40,7 @@ export class DagRunner<
   CONTEXT extends object,
   ROOTINPUT,
   OUTPUT,
-  INTERVENTIONDATA = unknown,
+  INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];

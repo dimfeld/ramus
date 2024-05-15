@@ -14,13 +14,20 @@ export type DagNodeState =
   | 'finished';
 
 /** The structure passed to a DAG node when it executes. */
-export interface DagNodeInput<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs> {
+export interface DagNodeInput<
+  CONTEXT extends object,
+  ROOTINPUT,
+  INPUTS extends AnyInputs,
+  INTERVENTIONRESPONSE = undefined,
+> {
   /** The context passed to the DAG by whatever started it. */
   context: CONTEXT;
   /** Inputs from the node's parents */
   input: INPUTS;
   /** Input from the code that spawned this DAG */
   rootInput: ROOTINPUT;
+  /** The response given for this node's intervention, if applicable. */
+  interventionResponse?: INTERVENTIONRESPONSE;
   /** The OpenTelemetry span for this execution. */
   span: Span;
   /** Return if this node has been cancelled due to failures elsewhere in the DAG. */
@@ -55,7 +62,7 @@ export interface DagNode<
   ROOTINPUT,
   INPUTS extends AnyInputs,
   OUTPUT,
-  INTERVENTIONDATA = unknown,
+  INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > {
   parents?: Array<keyof INPUTS>;
@@ -75,15 +82,14 @@ export interface DagNode<
   }) => Omit<Intervention<INTERVENTIONDATA>, 'id'> | undefined;
 
   run: (
-    input: DagNodeInput<CONTEXT, ROOTINPUT, INPUTS>,
-    interventionResponse?: INTERVENTIONRESPONSE
+    input: DagNodeInput<CONTEXT, ROOTINPUT, INPUTS, INTERVENTIONRESPONSE>
   ) => OUTPUT | Promise<OUTPUT>;
 }
 
 export interface Dag<
   CONTEXT extends object,
   INPUT,
-  INTERVENTIONDATA = unknown,
+  INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > {
   name: string;
@@ -99,7 +105,7 @@ export interface Dag<
 export type DagConfiguration<
   CONTEXT extends object,
   ROOTINPUT,
-  INTERVENTIONDATA = unknown,
+  INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > = Record<
   string,

@@ -67,7 +67,7 @@ export class CompiledDag<
   CONTEXT extends object,
   ROOTINPUT,
   OUTPUT,
-  INTERVENTIONDATA = unknown,
+  INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > {
   config: Dag<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
