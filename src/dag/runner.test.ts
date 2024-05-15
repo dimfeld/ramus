@@ -205,7 +205,7 @@ test('node error when not tolerating failures', async () => {
 });
 
 test('interventions', async () => {
-  const nodes: DagConfiguration<Context, number> = {
+  const nodes: DagConfiguration<Context, number, number, number> = {
     root: {
       run: async ({ context }) => {
         return context.ctxValue + 1;
@@ -218,6 +218,7 @@ test('interventions', async () => {
           return {
             message: 'A Question',
             source: 'intone',
+            data: 100,
           };
         }
       },
@@ -232,6 +233,7 @@ test('interventions', async () => {
           return {
             message: 'A Question',
             source: 'inttwo',
+            data: 75,
           };
         }
       },
@@ -247,7 +249,7 @@ test('interventions', async () => {
     },
   };
 
-  const dag: Dag<Context, number> = {
+  const dag: Dag<Context, number, number, number> = {
     name: 'test',
     context: () => ({ ctxValue: 5 }),
     nodes,
@@ -258,17 +260,18 @@ test('interventions', async () => {
     input: 1,
   });
 
-  let seenInterventions: Intervention[] = [];
+  let seenInterventions: Intervention<number>[] = [];
 
   runner.on('intervention', (i) => {
     seenInterventions.push(i);
     setTimeout(() => {
-      runner.respondToIntervention(i.id, 20);
+      runner.respondToIntervention(i.id, i.data * 2);
     }, 5);
   });
 
   let result = await runner.run();
-  expect(result).toBe(55);
+  // (6 + 2*100 + 1) + (6 + 2*75 + 1) + 1 = 365
+  expect(result).toBe(365);
 
   expect(seenInterventions.some((s) => s.source === 'intone')).toBe(true);
   expect(seenInterventions.some((s) => s.source === 'inttwo')).toBe(true);
