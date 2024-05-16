@@ -52,7 +52,7 @@ export interface DagNodeInput<
   /** Run another DAG as part of this execution. */
   runDag<CONTEXT extends object, NEWINPUT, OUTPUT>(
     options: Omit<DagRunnerOptions<CONTEXT, NEWINPUT, OUTPUT>, 'chronicle' | 'eventCb' | 'autorun'>
-  ): Promise<OUTPUT>;
+  ): Promise<void>;
 }
 
 export type AnyInputs = Record<string, unknown>;

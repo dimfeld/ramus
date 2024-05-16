@@ -60,6 +60,7 @@ export class DagNodeRunner<
   intervention: [Intervention<INTERVENTIONDATA>];
   finish: [{ name: string; output: OUTPUT }];
   error: [Error];
+  cancelled: [];
   parentError: [];
 }> {
   name: string;
@@ -74,6 +75,8 @@ export class DagNodeRunner<
   semaphores?: Semaphore[];
   autorun: () => boolean;
   eventCb: WorkflowEventCallback;
+  /** A promise which resolves when the node finishes or rejects on an error. */
+  _finished: Promise<{ name: string; output: OUTPUT }> | undefined;
 
   waiting: Set<string>;
   rootInput: ROOTINPUT;
@@ -112,6 +115,20 @@ export class DagNodeRunner<
     this.semaphores = semaphores;
     this.waiting = new Set();
     this.inputs = {};
+  }
+
+  get finished() {
+    if (!this._finished) {
+      // TODO This may need to start out resolved once we can revive a DAG.
+      this._finished = new Promise((resolve, reject) => {
+        this.once('finish', resolve);
+        this.once('cancelled', () => {
+          reject(new Error('Cancelled'));
+        });
+        this.once('error', reject);
+      });
+    }
+    return this._finished;
   }
 
   setState(state: DagNodeState) {
@@ -357,9 +374,9 @@ export class DagNodeRunner<
           } else {
             let err = e as Error;
             this.setState('error');
-            this.result = { type: 'error', error: e as Error };
-            sendEvent('dag:node_error', { error: e });
-            this.emit('error', e as Error);
+            this.result = { type: 'error', error: err };
+            sendEvent('dag:node_error', { error: err });
+            this.emit('error', err);
 
             span.recordException(err);
             span.setAttribute('error', err?.message ?? 'true');

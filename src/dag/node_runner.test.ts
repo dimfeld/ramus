@@ -35,7 +35,7 @@ function mockRunner(name: string, output: any, fail = false) {
     name: name,
     dagName: name,
     config: {
-      run: () => {
+      run: async () => {
         if (fail) {
           throw new Error('Parent node failed');
         }
@@ -46,7 +46,7 @@ function mockRunner(name: string, output: any, fail = false) {
     context: {} as any,
     eventCb: () => {},
   });
-  runner.init([], new EventEmitter());
+  runner.init([]);
   return runner;
 }
 
@@ -61,7 +61,7 @@ test('no parents', async () => {
   });
   const { promise, finished } = outputCatcher(runner);
 
-  runner.init([], new EventEmitter());
+  runner.init([]);
 
   // should be waiting before we started trying to run it
   expect(runner.state).toBe('waiting');
@@ -89,7 +89,7 @@ test('single parent', async () => {
 
   const { promise, finished } = outputCatcher(runner);
 
-  runner.init([parent], new EventEmitter());
+  runner.init([parent]);
 
   // should be waiting before we started trying to run it
   expect(runner.state).toBe('waiting');
@@ -125,7 +125,7 @@ test('multiple parents', async () => {
 
   const { promise, finished } = outputCatcher(runner);
 
-  runner.init(parents, new EventEmitter());
+  runner.init(parents);
 
   // Run most but not all of the parents.
   await Promise.all([parents[0].run(), parents[2].run(), parents[3].run()]);
@@ -166,11 +166,11 @@ test('parent failed when errors are not tolerated', async () => {
 
   let { promise, finished } = outputCatcher(runner);
 
-  runner.init([successParent, failParent], new EventEmitter());
+  runner.init([successParent, failParent]);
 
   failParent.run();
 
-  await expect(promise).rejects.toThrow('parentError');
+  expect(async () => promise).toThrow('parentError');
   expect(runner.state).toBe('cancelled');
   expect(runner.result).toBeUndefined();
   expect(finished()).toBe(true);
@@ -201,10 +201,10 @@ test('tolerate parent errors', async () => {
 
   let { promise, finished } = outputCatcher(runner);
 
-  runner.init([successParent, failParent], new EventEmitter());
+  runner.init([successParent, failParent]);
 
-  failParent.run();
-  successParent.run();
+  await failParent.run().catch(() => {});
+  await successParent.run();
 
   let result = await promise;
   expect(result).toEqual({ name: 'node', output: 6 });
@@ -234,10 +234,10 @@ test('tolerate parent errors, when all parents error', async () => {
 
   let { promise, finished } = outputCatcher(runner);
 
-  runner.init([failParent1, failParent2], new EventEmitter());
+  runner.init([failParent1, failParent2]);
 
-  failParent1.run();
-  failParent2.run();
+  failParent1.run().catch(() => {});
+  failParent2.run().catch(() => {});
 
   let result = await promise;
   // We should have run anyway, despite none of the parents finishing.
@@ -261,7 +261,7 @@ test('manual run', async () => {
 
   const { promise, finished } = outputCatcher(runner);
 
-  runner.init([parent], new EventEmitter());
+  runner.init([parent]);
 
   // should be waiting before we started trying to run it
   expect(runner.state).toBe('waiting');
@@ -306,7 +306,7 @@ test('with semaphores', async () => {
   });
   const { promise, finished } = outputCatcher(runner);
 
-  runner.init([], new EventEmitter());
+  runner.init([]);
 
   // should be waiting before we started trying to run it
   expect(runner.state).toBe('waiting');
@@ -357,7 +357,7 @@ describe('interventions', () => {
     });
     const { promise, finished } = outputCatcher(runner);
 
-    runner.init([], new EventEmitter());
+    runner.init([]);
     let caughtIntervention: Intervention | undefined;
     runner.on('intervention', (i) => (caughtIntervention = i));
 
@@ -403,7 +403,7 @@ describe('interventions', () => {
     });
     const { promise, finished } = outputCatcher(runner);
 
-    runner.init([parent], new EventEmitter());
+    runner.init([parent]);
     let caughtIntervention: Intervention | undefined;
     runner.on('intervention', (i) => (caughtIntervention = i));
 
@@ -449,7 +449,7 @@ describe('interventions', () => {
     });
     const { finished } = outputCatcher(runner);
 
-    runner.init([], new EventEmitter());
+    runner.init([]);
     let caughtIntervention: Intervention | undefined;
     runner.on('intervention', (i) => (caughtIntervention = i));
 

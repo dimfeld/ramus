@@ -45,6 +45,9 @@ export class DagRunner<
 > extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];
   intervention: [Intervention<INTERVENTIONDATA>];
+  cancelled: [];
+  error: [Error];
+  finish: [OUTPUT];
 }> {
   name: string;
   context?: CONTEXT;
@@ -66,6 +69,8 @@ export class DagRunner<
   autorun: () => boolean;
   input: ROOTINPUT;
   output: OUTPUT | undefined;
+  /* A promise which resolves when the entire DAG finishes or rejects on an error. */
+  _finished: Promise<OUTPUT> | undefined;
 
   requestedInterventions: Map<string, { data: Intervention<INTERVENTIONDATA>; node: string }> =
     new Map();
@@ -108,74 +113,92 @@ export class DagRunner<
     this.autorun = autorun ?? (() => true);
   }
 
+  get finished() {
+    if (!this._finished) {
+      // TODO Check for if we're already resolved or errored
+      this._finished = new Promise((resolve, reject) => {
+        this.once('finish', resolve);
+        this.once('cancelled', () => {
+          reject(new Error('Cancelled'));
+        });
+        this.once('error', reject);
+      });
+    }
+
+    return this._finished;
+  }
+
   /** Run the entire DAG to completion */
-  run(): Promise<OUTPUT> {
-    return new Promise((resolve, reject) => {
-      runInSpan(`DAG ${this.name}`, async () => {
+  run(): Promise<void> {
+    return runInSpan(`DAG ${this.name}`, async () => {
+      this.eventCb({
+        data: { input: this.input },
+        source: this.name,
+        sourceNode: '',
+        type: 'dag:start',
+        meta: this.chronicleOptions?.defaults?.metadata,
+      });
+
+      for (let runner of this.runners.values()) {
+        // State events are just for the UI when the DAG is being actively monitored.
+        runner.on('state', (e) => this.emit('state', e));
+        runner.on('intervention', (e) => {
+          this.requestedInterventions.set(e.id, { data: e, node: runner.name });
+          this.emit('intervention', e);
+        });
+
+        if (!this.tolerateFailures) {
+          runner.on('error', (e) => {
+            this.eventCb({
+              data: { error: e },
+              source: this.name,
+              sourceNode: '',
+              type: 'dag:error',
+              meta: this.chronicleOptions?.defaults?.metadata,
+            });
+            // Make sure to emit error before we cancel, so that anything listening to both will know about the
+            // error first.
+            this.emit('error', e);
+            this.cancel(false);
+          });
+        }
+      }
+
+      this.outputNode.on('error', (e) => {
+        this.cancel(false);
+        this.emit('error', e);
+      });
+
+      this.outputNode.on('finish', (e) => {
         this.eventCb({
-          data: { input: this.input },
+          data: { output: e.output },
           source: this.name,
           sourceNode: '',
-          type: 'dag:start',
+          type: 'dag:finish',
           meta: this.chronicleOptions?.defaults?.metadata,
         });
 
-        for (let runner of this.runners.values()) {
-          // State events are just for the UI when the DAG is being actively monitored.
-          runner.on('state', (e) => this.emit('state', e));
-          runner.on('intervention', (e) => {
-            this.requestedInterventions.set(e.id, { data: e, node: runner.name });
-            this.emit('intervention', e);
-          });
-
-          if (!this.tolerateFailures) {
-            runner.on('error', (e) => {
-              this.eventCb({
-                data: { error: e },
-                source: this.name,
-                sourceNode: '',
-                type: 'dag:error',
-                meta: this.chronicleOptions?.defaults?.metadata,
-              });
-
-              this.cancel();
-              reject(e);
-            });
-          }
-        }
-
-        this.outputNode.on('error', (e) => {
-          this.cancel();
-          reject(e);
-        });
-
-        this.outputNode.on('finish', (e) => {
-          this.eventCb({
-            data: { output: e.output },
-            source: this.name,
-            sourceNode: '',
-            type: 'dag:finish',
-            meta: this.chronicleOptions?.defaults?.metadata,
-          });
-
-          this.output = e.output;
-          resolve(e.output);
-        });
-
-        if (this.autorun()) {
-          for (let runner of this.runners.values()) {
-            if (runner.readyToResume()) {
-              runner.run();
-            }
-          }
-        }
+        this.output = e.output;
+        this.emit('finish', e.output);
       });
+
+      if (this.autorun()) {
+        for (let runner of this.runners.values()) {
+          if (runner.readyToResume()) {
+            runner.run();
+          }
+        }
+      }
     });
   }
 
-  cancel() {
+  cancel(emit = true) {
     for (let runner of this.runners.values()) {
       runner.cancel();
+    }
+
+    if (emit) {
+      this.emit('cancelled');
     }
   }
 
@@ -199,5 +222,7 @@ export class DagRunner<
 export async function runDag<CONTEXT extends object, INPUT, OUTPUT>(
   options: DagRunnerOptions<CONTEXT, INPUT, OUTPUT>
 ) {
-  return await new DagRunner(options).run();
+  let runner = new DagRunner(options);
+  runner.run();
+  return runner.finished;
 }

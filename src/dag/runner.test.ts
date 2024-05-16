@@ -269,7 +269,8 @@ test('interventions', async () => {
     }, 5);
   });
 
-  let result = await runner.run();
+  runner.run();
+  let result = await runner.finished;
   // (6 + 2*100 + 1) + (6 + 2*75 + 1) + 1 = 365
   expect(result).toBe(365);
 
