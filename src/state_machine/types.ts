@@ -2,6 +2,15 @@ import { Schema } from 'jsonschema';
 import { Intervention } from '../interventions.js';
 import { NodeInput } from '../types.js';
 
+/** A generic idea of what the state machine is doing. */
+export type StateMachineGenericState =
+  | 'initial'
+  | 'intervention'
+  | 'running'
+  | 'end'
+  | 'error'
+  | 'cancelled';
+
 export interface StateMachine<
   CONTEXT extends object,
   ROOTINPUT,

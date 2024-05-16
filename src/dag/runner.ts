@@ -8,6 +8,7 @@ import { runInSpan } from '../tracing.js';
 import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 import { Intervention } from '../interventions.js';
+import { Runnable, RunnableEvents } from '../runnable.js';
 
 export interface DagRunnerOptions<
   CONTEXT extends object,
@@ -36,19 +37,26 @@ export interface DagRunnerOptions<
 
 function noop() {}
 
-export class DagRunner<
-  CONTEXT extends object,
-  ROOTINPUT,
-  OUTPUT,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
-> extends EventEmitter<{
+type DagRunnerEvents<OUTPUT, INTERVENTIONDATA> = {
   'dag:state': [{ sourceNode: string; source: string; state: DagNodeState }];
-  intervention: [Intervention<INTERVENTIONDATA>];
-  cancelled: [];
-  error: [Error];
-  finish: [OUTPUT];
-}> {
+} & RunnableEvents<OUTPUT, INTERVENTIONDATA>;
+
+export class DagRunner<
+    CONTEXT extends object,
+    ROOTINPUT,
+    OUTPUT,
+    INTERVENTIONDATA = undefined,
+    INTERVENTIONRESPONSE = unknown,
+  >
+  extends EventEmitter<DagRunnerEvents<OUTPUT, INTERVENTIONDATA>>
+  implements
+    Runnable<
+      OUTPUT,
+      INTERVENTIONDATA,
+      INTERVENTIONRESPONSE,
+      DagRunnerEvents<OUTPUT, INTERVENTIONDATA>
+    >
+{
   name: string;
   context?: CONTEXT;
   runners: Map<
@@ -218,7 +226,8 @@ export class DagRunner<
   }
 }
 
-/** Create a run a DAG in one statement. This is equivalent to `new DagRunner(dag, context).run()` */
+/** Create a run a DAG in one statement, for simple cases. This will not work properly
+ * with any DAG that might halt with an intervention. */
 export async function runDag<CONTEXT extends object, INPUT, OUTPUT>(
   options: DagRunnerOptions<CONTEXT, INPUT, OUTPUT>
 ) {

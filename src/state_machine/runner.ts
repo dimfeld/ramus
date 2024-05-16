@@ -1,11 +1,12 @@
 import { EventEmitter } from 'events';
-import { StateMachine } from './types.js';
+import { StateMachine, StateMachineGenericState } from './types.js';
 import { Intervention } from '../interventions.js';
 import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
 import { runInSpan } from '../tracing.js';
+import { Runnable, RunnableEvents } from '../runnable.js';
 
 export interface StateMachineRunnerOptions<
   CONTEXT extends object,
@@ -28,15 +29,27 @@ export interface StateMachineRunnerOptions<
   autorun?: () => boolean;
 }
 
+type StateMachineRunnerEvents<OUTPUT, INTERVENTIONDATA> = {
+  'state_machine:state': [{ machineState: StateMachineGenericState; state: string }];
+} & RunnableEvents<OUTPUT, INTERVENTIONDATA>;
+
 export class StateMachineRunner<
-  CONTEXT extends object,
-  ROOTINPUT,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
-> extends EventEmitter<{
-  'state_machine:state': [{ state: string }];
-  intervention: [Intervention<INTERVENTIONDATA>];
-}> {
+    CONTEXT extends object,
+    ROOTINPUT,
+    OUTPUT,
+    INTERVENTIONDATA = undefined,
+    INTERVENTIONRESPONSE = unknown,
+  >
+  extends EventEmitter<StateMachineRunnerEvents<OUTPUT, INTERVENTIONDATA>>
+  implements
+    Runnable<
+      OUTPUT,
+      INTERVENTIONDATA,
+      INTERVENTIONRESPONSE,
+      StateMachineRunnerEvents<OUTPUT, INTERVENTIONDATA>
+    >
+{
+  genericState: StateMachineGenericState;
   currentState: string;
   context: CONTEXT;
   config: StateMachine<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
@@ -45,6 +58,7 @@ export class StateMachineRunner<
   cache?: NodeResultCache;
   semaphores?: Semaphore[];
   autorun: () => boolean;
+  _finished: Promise<OUTPUT> | undefined;
 
   interventionIds: Set<string> = new Set();
 
@@ -60,6 +74,7 @@ export class StateMachineRunner<
     this.eventCb = options.eventCb ?? (() => {});
     this.autorun = options.autorun ?? (() => true);
 
+    this.genericState = 'initial';
     this.currentState = options.config.initial;
   }
 
@@ -71,31 +86,46 @@ export class StateMachineRunner<
     // TODO
     // If this is a general runner then we want to respondToIntervention.
     // If it's an state machine node then we just run it
+    // These differences can be resolved by using a runner for each state node as well
     this.interventionIds.delete(id);
     this.run(data);
   }
 
-  run(interventionResponse?: INTERVENTIONRESPONSE) {
-    return new Promise((resolve, reject) => {
-      runInSpan(`StateMachine ${this.config.name}`, async (span) => {
-        this.eventCb({
-          data: { state: this.currentState },
-          source: this.config.name,
-          sourceNode: '',
-          type: 'state_machine:start',
-          meta: this.chronicleOptions?.defaults?.metadata,
-        });
-
-        let config = this.config.nodes[this.currentState];
-
-        if (config.intervention) {
-          // TODO call the intervention function and emit it if one happens
-        }
-
-        // TODO run the node, being sensitive to interventions that may be triggered from the node runner.
-        // TODO make a separate node runner for state machines
-        //
+  get finished() {
+    if (!this._finished) {
+      this._finished = new Promise((resolve, reject) => {
+        this.once('error', reject);
+        this.once('cancelled', () => reject(new Error('Cancelled')));
+        this.once('finish', resolve);
       });
+    }
+
+    return this._finished;
+  }
+
+  cancel() {
+    this.genericState = 'cancelled';
+  }
+
+  run(interventionResponse?: INTERVENTIONRESPONSE) {
+    return runInSpan(`StateMachine ${this.config.name}`, async (span) => {
+      this.eventCb({
+        data: { state: this.currentState },
+        source: this.config.name,
+        sourceNode: '',
+        type: 'state_machine:start',
+        meta: this.chronicleOptions?.defaults?.metadata,
+      });
+
+      let config = this.config.nodes[this.currentState];
+
+      if (config.intervention) {
+        // TODO call the intervention function and emit it if one happens
+      }
+
+      // TODO run the node, being sensitive to interventions that may be triggered from the node runner.
+      // TODO make a separate node runner for state machines
+      //
     });
   }
 }
