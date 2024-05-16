@@ -5,6 +5,7 @@ import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
+import { runInSpan } from '../tracing.js';
 
 export interface StateMachineRunnerOptions<
   CONTEXT extends object,
@@ -75,7 +76,27 @@ export class StateMachineRunner<
   }
 
   run(interventionResponse?: INTERVENTIONRESPONSE) {
-    // run the current node
+    return new Promise((resolve, reject) => {
+      runInSpan(`StateMachine ${this.config.name}`, async (span) => {
+        this.eventCb({
+          data: { state: this.currentState },
+          source: this.config.name,
+          sourceNode: '',
+          type: 'state_machine:start',
+          meta: this.chronicleOptions?.defaults?.metadata,
+        });
+
+        let config = this.config.nodes[this.currentState];
+
+        if (config.intervention) {
+          // TODO call the intervention function and emit it if one happens
+        }
+
+        // TODO run the node, being sensitive to interventions that may be triggered from the node runner.
+        // TODO make a separate node runner for state machines
+        //
+      });
+    });
   }
 }
 
