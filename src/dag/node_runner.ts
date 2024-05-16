@@ -174,13 +174,26 @@ export class DagNodeRunner<
   }
 
   cancel() {
-    if (this.readyToRun() || this.state === 'running') {
+    if (this.stateReadyToRun() || this.state === 'running') {
       this.setState('cancelled');
     }
   }
 
-  readyToRun() {
+  /** Return true if we should try running this node when starting up the runner, either from the start or when
+   * reviving the DAG from saved state. This excludes nodes which are waiting for an intervention response. */
+  readyToResume() {
+    return this.waiting.size === 0 && (this.state === 'waiting' || this.state === 'ready');
+  }
+
+  /** Based only on the state, is this node runnable. This doesn't look at if the node is still waiting for some parent
+   * nodes. */
+  stateReadyToRun() {
     return this.state === 'waiting' || this.state === 'ready' || this.state === 'intervention';
+  }
+
+  /** Return true if we can run this node. This returns true for nodes that are waiting for an intervention response. */
+  readyToRun() {
+    return this.waiting.size === 0 && this.stateReadyToRun();
   }
 
   async run(
@@ -189,7 +202,7 @@ export class DagNodeRunner<
   ): Promise<boolean> {
     const ready = this.readyToRun();
     if (triggeredFromParentFinished) {
-      if (this.waiting.size > 0 || !ready) {
+      if (!ready) {
         // Not ready to execute yet
         return false;
       }
@@ -201,7 +214,7 @@ export class DagNodeRunner<
     } else {
       // We were manually told to run, but this node is still waiting for some parent input,
       // or we're currently running, so we can't execute.
-      if (this.waiting.size > 0 || !(ready || this.state === 'error')) {
+      if (!ready && this.state !== 'error') {
         return false;
       }
     }

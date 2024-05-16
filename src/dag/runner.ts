@@ -162,10 +162,9 @@ export class DagRunner<
           resolve(e.output);
         });
 
-        // Start running all root nodes
         if (this.autorun()) {
           for (let runner of this.runners.values()) {
-            if (!runner.config.parents?.length) {
+            if (runner.readyToResume()) {
               runner.run();
             }
           }
