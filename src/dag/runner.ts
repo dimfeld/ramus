@@ -70,8 +70,6 @@ export class DagRunner<
   requestedInterventions: Map<string, { data: Intervention<INTERVENTIONDATA>; node: string }> =
     new Map();
 
-  cancel: EventEmitter<{ cancel: [] }>;
-
   constructor({
     dag,
     context,
@@ -93,7 +91,7 @@ export class DagRunner<
     this.chronicleOptions = chronicle;
     this.eventCb = eventCb ?? noop;
 
-    const { runners, outputNode, cancel } = dag.buildRunners({
+    const { runners, outputNode } = dag.buildRunners({
       context,
       input,
       chronicle,
@@ -106,7 +104,6 @@ export class DagRunner<
     this.name = dag.config.name;
     this.tolerateFailures = dag.config.tolerateFailures ?? false;
     this.runners = runners;
-    this.cancel = cancel;
     this.outputNode = outputNode;
     this.autorun = autorun ?? (() => true);
   }
@@ -141,14 +138,14 @@ export class DagRunner<
                 meta: this.chronicleOptions?.defaults?.metadata,
               });
 
-              this.cancel.emit('cancel');
+              this.cancel();
               reject(e);
             });
           }
         }
 
         this.outputNode.on('error', (e) => {
-          this.cancel.emit('cancel');
+          this.cancel();
           reject(e);
         });
 
@@ -175,6 +172,12 @@ export class DagRunner<
         }
       });
     });
+  }
+
+  cancel() {
+    for (let runner of this.runners.values()) {
+      runner.cancel();
+    }
   }
 
   respondToIntervention(id: string, response: INTERVENTIONRESPONSE) {

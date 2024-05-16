@@ -103,8 +103,6 @@ export class CompiledDag<
     autorun,
     semaphores,
   }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
-    const cancel = new EventEmitter<{ cancel: [] }>();
-
     let nodes = new Map<
       string,
       DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown, INTERVENTIONDATA, INTERVENTIONRESPONSE>
@@ -137,7 +135,7 @@ export class CompiledDag<
 
     for (let node of nodes.values()) {
       let parents = node.config.parents?.map((name) => nodes.get(name)!) ?? [];
-      node.init(parents, cancel);
+      node.init(parents);
     }
 
     let leafRunners = this.info.leafNodes.map((name) => nodes.get(name)!);
@@ -172,12 +170,11 @@ export class CompiledDag<
       eventCb,
     });
 
-    outputNode.init(leafRunners, cancel);
+    outputNode.init(leafRunners);
 
     return {
       runners: nodes,
       outputNode,
-      cancel,
     };
   }
 }

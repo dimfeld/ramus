@@ -130,8 +130,7 @@ export class DagNodeRunner<
       unknown,
       INTERVENTIONDATA,
       INTERVENTIONRESPONSE
-    >[],
-    cancel: EventEmitter<{ cancel: [] }>
+    >[]
   ) {
     let parentSpan = opentelemetry.trace.getActiveSpan();
     if (parentSpan) {
@@ -140,12 +139,6 @@ export class DagNodeRunner<
         parentSpan
       );
     }
-
-    cancel.on('cancel', () => {
-      if (this.state === 'waiting' || this.state === 'running') {
-        this.setState('cancelled');
-      }
-    });
 
     const handleFinishedParent = (e: { name: string; output: any }) => {
       if (this.state !== 'waiting') {
@@ -177,6 +170,12 @@ export class DagNodeRunner<
       parent.once('finish', handleFinishedParent);
       parent.once('error', () => handleParentError(parent.name));
       parent.once('parentError', () => handleParentError(parent.name));
+    }
+  }
+
+  cancel() {
+    if (this.readyToRun() || this.state === 'running') {
+      this.setState('cancelled');
     }
   }
 
