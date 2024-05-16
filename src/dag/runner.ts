@@ -43,7 +43,7 @@ export class DagRunner<
   INTERVENTIONDATA = undefined,
   INTERVENTIONRESPONSE = unknown,
 > extends EventEmitter<{
-  state: [{ sourceNode: string; source: string; state: DagNodeState }];
+  'dag:state': [{ sourceNode: string; source: string; state: DagNodeState }];
   intervention: [Intervention<INTERVENTIONDATA>];
   cancelled: [];
   error: [Error];
@@ -141,7 +141,7 @@ export class DagRunner<
 
       for (let runner of this.runners.values()) {
         // State events are just for the UI when the DAG is being actively monitored.
-        runner.on('state', (e) => this.emit('state', e));
+        runner.on('state', (e) => this.emit('dag:state', e));
         runner.on('intervention', (e) => {
           this.requestedInterventions.set(e.id, { data: e, node: runner.name });
           this.emit('intervention', e);

@@ -339,19 +339,6 @@ export class DagNodeRunner<
                   throw new NodeCancelledError();
                 }
               },
-              runDag: (options) => {
-                let childRunner = new DagRunner({
-                  ...options,
-                  autorun: this.autorun,
-                  eventCb: this.eventCb,
-                  chronicle: chronicleOptions,
-                });
-
-                // Forward state events up to the parent
-                childRunner.on('state', (e) => this.emit('state', e));
-
-                return childRunner.run();
-              },
             });
 
             this.cache?.set(this.name, cacheKey, JSON.stringify(output));
