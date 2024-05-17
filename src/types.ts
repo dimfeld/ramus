@@ -1,13 +1,7 @@
 import { Span } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
-import { Intervention } from './interventions.js';
 
-export interface NodeInput<
-  CONTEXT extends object,
-  ROOTINPUT,
-  INPUTS,
-  INTERVENTIONRESPONSE = undefined,
-> {
+export interface NodeInput<CONTEXT extends object, ROOTINPUT, INPUTS> {
   /** The context passed to the DAG by whatever started it. */
   context: CONTEXT;
   /** Inputs from the node's parents */
@@ -16,8 +10,6 @@ export interface NodeInput<
   rootInput: ROOTINPUT;
   /** The OpenTelemetry span for this execution. */
   span: Span;
-  /** The response given for this node's intervention, if applicable. */
-  interventionResponse?: INTERVENTIONRESPONSE;
   /** If a ChronicleClientOptions was supplied to the DAG, this is that object, cloned
    * and modified to set the step name to this DAG node's name. */
   chronicleOptions?: ChronicleClientOptions;

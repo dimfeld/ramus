@@ -7,19 +7,10 @@ import { DagNodeRunner } from './node_runner.js';
 import { runInSpan } from '../tracing.js';
 import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
-import { Intervention } from '../interventions.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
 
-export interface DagRunnerOptions<
-  CONTEXT extends object,
-  ROOTINPUT,
-  OUTPUT = unknown,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
-> {
-  dag:
-    | Dag<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>
-    | CompiledDag<CONTEXT, ROOTINPUT, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
+export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = unknown> {
+  dag: Dag<CONTEXT, ROOTINPUT> | CompiledDag<CONTEXT, ROOTINPUT, OUTPUT>;
   input: ROOTINPUT;
   cache?: NodeResultCache;
   context?: CONTEXT;
@@ -37,40 +28,18 @@ export interface DagRunnerOptions<
 
 function noop() {}
 
-type DagRunnerEvents<OUTPUT, INTERVENTIONDATA> = {
+type DagRunnerEvents<OUTPUT> = {
   'dag:state': [{ sourceNode: string; source: string; state: DagNodeState }];
-} & RunnableEvents<OUTPUT, INTERVENTIONDATA>;
+} & RunnableEvents<OUTPUT>;
 
-export class DagRunner<
-    CONTEXT extends object,
-    ROOTINPUT,
-    OUTPUT,
-    INTERVENTIONDATA = undefined,
-    INTERVENTIONRESPONSE = unknown,
-  >
-  extends EventEmitter<DagRunnerEvents<OUTPUT, INTERVENTIONDATA>>
-  implements
-    Runnable<
-      OUTPUT,
-      INTERVENTIONDATA,
-      INTERVENTIONRESPONSE,
-      DagRunnerEvents<OUTPUT, INTERVENTIONDATA>
-    >
+export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
+  extends EventEmitter<DagRunnerEvents<OUTPUT>>
+  implements Runnable<OUTPUT, DagRunnerEvents<OUTPUT>>
 {
   name: string;
   context?: CONTEXT;
-  runners: Map<
-    string,
-    DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, any, INTERVENTIONDATA, INTERVENTIONRESPONSE>
-  >;
-  outputNode: DagNodeRunner<
-    CONTEXT,
-    ROOTINPUT,
-    AnyInputs,
-    OUTPUT,
-    INTERVENTIONDATA,
-    INTERVENTIONRESPONSE
-  >;
+  runners: Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, any>>;
+  outputNode: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>;
   tolerateFailures: boolean;
   chronicleOptions?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
@@ -79,9 +48,6 @@ export class DagRunner<
   output: OUTPUT | undefined;
   /* A promise which resolves when the entire DAG finishes or rejects on an error. */
   _finished: Promise<OUTPUT> | undefined;
-
-  requestedInterventions: Map<string, { data: Intervention<INTERVENTIONDATA>; node: string }> =
-    new Map();
 
   constructor({
     dag,
@@ -92,7 +58,7 @@ export class DagRunner<
     cache,
     autorun,
     semaphores,
-  }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>) {
+  }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT>) {
     super();
     if (!(dag instanceof CompiledDag)) {
       dag = new CompiledDag(dag);
@@ -138,7 +104,7 @@ export class DagRunner<
 
   /** Run the entire DAG to completion */
   run(): Promise<void> {
-    return runInSpan(`DAG ${this.name}`, async () => {
+    return runInSpan(`DAG ${this.name}`, {}, async (span) => {
       this.eventCb({
         data: { input: this.input },
         source: this.name,
@@ -148,13 +114,6 @@ export class DagRunner<
       });
 
       for (let runner of this.runners.values()) {
-        // State events are just for the UI when the DAG is being actively monitored.
-        runner.on('state', (e) => this.emit('dag:state', e));
-        runner.on('intervention', (e) => {
-          this.requestedInterventions.set(e.id, { data: e, node: runner.name });
-          this.emit('intervention', e);
-        });
-
         if (!this.tolerateFailures) {
           runner.on('error', (e) => {
             this.eventCb({
@@ -209,25 +168,9 @@ export class DagRunner<
       this.emit('cancelled');
     }
   }
-
-  respondToIntervention(id: string, response: INTERVENTIONRESPONSE) {
-    const intervention = this.requestedInterventions.get(id);
-    if (!intervention) {
-      throw new Error('Intervention id not found');
-    }
-
-    this.requestedInterventions.delete(id);
-    const runner = this.runners.get(intervention.node);
-    if (!runner) {
-      throw new Error(`Node runner ${intervention.node} not found`);
-    }
-
-    return runner.run(false, response);
-  }
 }
 
-/** Create a run a DAG in one statement, for simple cases. This will not work properly
- * with any DAG that might halt with an intervention. */
+/** Create a run a DAG in one statement, for simple cases.*/
 export async function runDag<CONTEXT extends object, INPUT, OUTPUT>(
   options: DagRunnerOptions<CONTEXT, INPUT, OUTPUT>
 ) {

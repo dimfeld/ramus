@@ -5,7 +5,7 @@ export type * from './dag/types.js';
 
 export * from './cache.js';
 export * from './events.js';
-export * from './interventions.js';
+export * from './runnable.js';
 export * from './semaphore.js';
 
 export * as tools from './tools/index.js';

@@ -1,14 +1,9 @@
-import { Span } from '@opentelemetry/api';
-import { ChronicleClientOptions } from 'chronicle-proxy';
-import { DagRunnerOptions } from './runner.js';
-import { Intervention } from '../interventions.js';
 import { NodeInput } from '../types.js';
 import { Schema } from 'jsonschema';
 
 export type DagNodeState =
   | 'waiting'
   | 'ready'
-  | 'intervention'
   | 'pendingSemaphore'
   | 'running'
   | 'cancelled'
@@ -16,50 +11,25 @@ export type DagNodeState =
   | 'finished';
 
 /** The structure passed to a DAG node when it executes. */
-export type DagNodeInput<
-  CONTEXT extends object,
+export type DagNodeInput<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs> = NodeInput<
+  CONTEXT,
   ROOTINPUT,
-  INPUTS extends AnyInputs,
-  INTERVENTIONRESPONSE = undefined,
-> = NodeInput<CONTEXT, ROOTINPUT, INPUTS, INTERVENTIONRESPONSE>;
+  INPUTS
+>;
 
 export type AnyInputs = Record<string, unknown>;
 
-export interface DagNode<
-  CONTEXT extends object,
-  ROOTINPUT,
-  INPUTS extends AnyInputs,
-  OUTPUT,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
-> {
+export interface DagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInputs, OUTPUT> {
   parents?: Array<keyof INPUTS>;
   /** If set, participate in global rate limiting of nodes with the same `semaphoreKey`. */
   semaphoreKey?: string;
   /** If true, run this node even if one of its parents has an error. */
   tolerateParentErrors?: boolean;
 
-  /** Check if this node requires user intervention before it can run. The `input` argument is the input
-   * that the node will receive, and `response` is the user's latest response, if any. This function is intentionally
-   * simple. For more complex needs you should embed a state machine instead. */
-  requiresIntervention?: (input: {
-    context: CONTEXT;
-    input: INPUTS;
-    rootInput: ROOTINPUT;
-    response?: INTERVENTIONRESPONSE;
-  }) => Omit<Intervention<INTERVENTIONDATA>, 'id'> | undefined;
-
-  run: (
-    input: DagNodeInput<CONTEXT, ROOTINPUT, INPUTS, INTERVENTIONRESPONSE>
-  ) => OUTPUT | Promise<OUTPUT>;
+  run: (input: DagNodeInput<CONTEXT, ROOTINPUT, INPUTS>) => OUTPUT | Promise<OUTPUT>;
 }
 
-export interface Dag<
-  CONTEXT extends object,
-  INPUT,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
-> {
+export interface Dag<CONTEXT extends object, INPUT> {
   name: string;
   /** Build the DAG's context, if it was not supplied externally. */
   context: () => CONTEXT;
@@ -70,17 +40,12 @@ export interface Dag<
   /** If true, keep running whatever we can when a node fails.
   When false or omitted, the entire DAG will end with an error if any node fails. */
   tolerateFailures?: boolean;
-  nodes: DagConfiguration<CONTEXT, INPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
+  nodes: DagConfiguration<CONTEXT, INPUT>;
 }
 
-export type DagConfiguration<
-  CONTEXT extends object,
-  ROOTINPUT,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
-> = Record<
+export type DagConfiguration<CONTEXT extends object, ROOTINPUT> = Record<
   string,
-  DagNode<CONTEXT, ROOTINPUT, AnyInputs, unknown, INTERVENTIONDATA, INTERVENTIONRESPONSE>
+  DagNode<CONTEXT, ROOTINPUT, AnyInputs, unknown>
 >;
 
 export type DagOutput<NODE> = NODE extends DagNode<any, any, any, infer OUTPUT> ? OUTPUT : never;

@@ -1,20 +1,26 @@
 import { EventEmitter } from 'events';
-import { StateMachine, StateMachineGenericState } from './types.js';
-import { Intervention } from '../interventions.js';
+import * as opentelemetry from '@opentelemetry/api';
+import { randomUUID } from 'crypto';
+import { StateMachine, StateMachineStatus, TransitionGuardInput } from './types.js';
 import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
-import { runInSpan } from '../tracing.js';
+import {
+  addSpanEvent,
+  runInSpan,
+  runInSpanWithParent,
+  toSpanAttributeValue,
+  tracer,
+} from '../tracing.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
+import { NodeInput } from '../types.js';
+import { CancelledError } from '../errors.js';
 
-export interface StateMachineRunnerOptions<
-  CONTEXT extends object,
-  ROOTINPUT,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
-> {
-  config: StateMachine<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
+export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
+  config: StateMachine<CONTEXT, ROOTINPUT>;
+  /** A name for this instance of the state machine. */
+  name?: string;
   cache?: NodeResultCache;
   context: CONTEXT;
   /** Semaphores which can be used to rate limit operations by the DAG. This accepts multiple Semaphores, which
@@ -27,68 +33,65 @@ export interface StateMachineRunnerOptions<
   /** A function that returns if the DAG should run nodes whenever they become ready, or wait for an external source to
    * run them. */
   autorun?: () => boolean;
+  input: ROOTINPUT;
 }
 
-type StateMachineRunnerEvents<OUTPUT, INTERVENTIONDATA> = {
-  'state_machine:state': [{ machineState: StateMachineGenericState; state: string }];
-} & RunnableEvents<OUTPUT, INTERVENTIONDATA>;
+type StateMachineRunnerEvents<OUTPUT> = {
+  'state_machine:state': [{ machineState: StateMachineStatus; state: string }];
+} & RunnableEvents<OUTPUT>;
 
-export class StateMachineRunner<
-    CONTEXT extends object,
-    ROOTINPUT,
-    OUTPUT,
-    INTERVENTIONDATA = undefined,
-    INTERVENTIONRESPONSE = unknown,
-  >
-  extends EventEmitter<StateMachineRunnerEvents<OUTPUT, INTERVENTIONDATA>>
-  implements
-    Runnable<
-      OUTPUT,
-      INTERVENTIONDATA,
-      INTERVENTIONRESPONSE,
-      StateMachineRunnerEvents<OUTPUT, INTERVENTIONDATA>
-    >
+export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
+  extends EventEmitter<StateMachineRunnerEvents<OUTPUT>>
+  implements Runnable<OUTPUT, StateMachineRunnerEvents<OUTPUT>>
 {
-  genericState: StateMachineGenericState;
-  currentState: string;
+  machineStatus: StateMachineStatus = 'initial';
+
+  currentState: {
+    state: string;
+    input?: any;
+    /** A cache of the output of the current node, for when we aren't transitioning right away. */
+    output?: unknown;
+  };
+
+  name: string;
+  rootInput: ROOTINPUT;
   context: CONTEXT;
-  config: StateMachine<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
+  config: StateMachine<CONTEXT, ROOTINPUT>;
   chronicleOptions?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
   cache?: NodeResultCache;
   semaphores?: Semaphore[];
+  parentSpanContext?: opentelemetry.Context;
+  stepIndex = 0;
   autorun: () => boolean;
+  eventQueue: { type: string; data: unknown }[] = [];
   _finished: Promise<OUTPUT> | undefined;
 
-  interventionIds: Set<string> = new Set();
-
-  constructor(
-    options: StateMachineRunnerOptions<CONTEXT, ROOTINPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>
-  ) {
+  constructor(options: StateMachineRunnerOptions<CONTEXT, ROOTINPUT>) {
     super();
     validateConfig(options.config);
     this.config = options.config;
     this.context = options.context;
     this.cache = options.cache;
+    this.rootInput = options.input;
+    this.chronicleOptions = options.chronicle;
     this.semaphores = options.semaphores;
     this.eventCb = options.eventCb ?? (() => {});
     this.autorun = options.autorun ?? (() => true);
+    this.name = options.name || options.config.name;
 
-    this.genericState = 'initial';
-    this.currentState = options.config.initial;
+    this.currentState = { state: options.config.initial, input: options.input };
+    let parentSpan = opentelemetry.trace.getActiveSpan();
+    if (parentSpan) {
+      this.parentSpanContext = opentelemetry.trace.setSpan(
+        opentelemetry.context.active(),
+        parentSpan
+      );
+    }
   }
 
-  respondToIntervention(id: string, data: INTERVENTIONRESPONSE) {
-    if (!this.interventionIds.has(id)) {
-      return;
-    }
-
-    // TODO
-    // If this is a general runner then we want to respondToIntervention.
-    // If it's an state machine node then we just run it
-    // These differences can be resolved by using a runner for each state node as well
-    this.interventionIds.delete(id);
-    this.run(data);
+  get state() {
+    return this.currentState.state;
   }
 
   get finished() {
@@ -104,32 +107,246 @@ export class StateMachineRunner<
   }
 
   cancel() {
-    this.genericState = 'cancelled';
+    this.setStatus('cancelled');
+    this.emit('cancelled');
   }
 
-  run(interventionResponse?: INTERVENTIONRESPONSE) {
-    return runInSpan(`StateMachine ${this.config.name}`, async (span) => {
-      this.eventCb({
-        data: { state: this.currentState },
-        source: this.config.name,
-        sourceNode: '',
-        type: 'state_machine:start',
-        meta: this.chronicleOptions?.defaults?.metadata,
-      });
+  /** Run until the state machine has no more transitions to run. */
+  async run() {
+    if (!this.canStep()) {
+      // Avoid creating an empty span if we can't do anything.
+      return;
+    }
 
-      let config = this.config.nodes[this.currentState];
-
-      if (config.intervention) {
-        // TODO call the intervention function and emit it if one happens
+    return await runInSpanWithParent(
+      `machine ${this.name}`,
+      {},
+      this.parentSpanContext,
+      async () => {
+        while (this.canStep()) {
+          await this.step();
+        }
       }
+    );
+  }
 
-      // TODO run the node, being sensitive to interventions that may be triggered from the node runner.
-      // TODO make a separate node runner for state machines
-      //
+  /** Return true if the state machine can run a step right now. */
+  canStep() {
+    if (
+      this.machineStatus === 'running' ||
+      this.machineStatus === 'cancelled' ||
+      this.machineStatus === 'waitingForEvent'
+    ) {
+      return false;
+    }
+
+    const node = this.config.nodes[this.currentState.state];
+    if (node.run || node.transition?.['']) {
+      return true;
+    }
+
+    return false;
+  }
+
+  step() {
+    // TODO go to error state when we get an error
+    // TODO semaphores
+    // TODO event logging
+    this.stepIndex += 1;
+    return runInSpan(
+      `machine ${this.name} ${this.currentState}`,
+      {
+        attributes: {
+          step_index: this.stepIndex,
+          input: toSpanAttributeValue(this.currentState.input),
+          context: toSpanAttributeValue(this.context),
+        },
+      },
+      async (span) => {
+        this.machineStatus = 'running';
+
+        let chronicleOptions = {
+          ...this.chronicleOptions,
+          defaults: {
+            ...this.chronicleOptions?.defaults,
+            metadata: {
+              ...this.chronicleOptions?.defaults?.metadata,
+              step_index: this.stepIndex,
+              step: this.currentState.state,
+            },
+          },
+        };
+
+        let nodeInput: NodeInput<CONTEXT, ROOTINPUT, any> = {
+          context: this.context,
+          event: (type, data, spanEvent = true) => {
+            if (spanEvent) {
+              addSpanEvent(span, type, data);
+            }
+
+            this.eventCb({
+              type,
+              data,
+              meta: chronicleOptions.defaults.metadata,
+              source: this.name,
+              sourceNode: this.currentState.state,
+            });
+          },
+          isCancelled: () => this.machineStatus === 'cancelled',
+          exitIfCancelled: () => {
+            if (this.machineStatus === 'cancelled') {
+              throw new CancelledError();
+            }
+          },
+          input: this.currentState.input,
+          rootInput: this.rootInput,
+          span,
+          chronicleOptions,
+        };
+
+        let config = this.config.nodes[this.currentState.state];
+
+        if (config.run) {
+          this.currentState.output = await config.run(nodeInput);
+          span.setAttribute('output', toSpanAttributeValue(this.currentState.output as object));
+        }
+
+        // If some events were queued up while running, then try applying them now.
+        let transitioned = false;
+        if (this.eventQueue?.length) {
+          let eventQueue = this.eventQueue;
+          this.eventQueue = [];
+          for (let { type, data } of eventQueue) {
+            let t = this.runTransition(type, data);
+            if (t) {
+              transitioned = true;
+              break;
+            }
+          }
+        }
+
+        if (!transitioned) {
+          transitioned = this.runTransition();
+        }
+
+        if (transitioned) {
+          this.updatePostTransition();
+        } else {
+          this.setStatus('waitingForEvent');
+        }
+
+        return transitioned;
+      }
+    );
+  }
+
+  /** Update the machine's generic status. */
+  private setStatus(newStatus: StateMachineStatus) {
+    if (this.machineStatus === newStatus) {
+      return;
+    }
+
+    this.machineStatus = newStatus;
+    this.emit('state', {
+      machineState: this.machineStatus,
+      state: this.currentState.state,
     });
+  }
+
+  private updatePostTransition() {
+    if (this.machineStatus === 'cancelled') {
+      return;
+    }
+
+    if (this.config.nodes[this.currentState.state].final) {
+      this.setStatus('final');
+    } else {
+      this.setStatus('ready');
+    }
+  }
+
+  /** Figure out which transition to run for an event. */
+  private resolveTransitions(eventType?: string, eventData?: unknown): string | undefined {
+    const node = this.config.nodes[this.currentState.state];
+    const transition = node.transition?.[eventType ?? ''];
+
+    if (!transition) {
+      return;
+    } else if (typeof transition === 'string') {
+      return transition;
+    } else {
+      let transitionInput: TransitionGuardInput<CONTEXT, ROOTINPUT, any, any> = {
+        context: this.context,
+        input: this.currentState.input,
+        output: this.currentState.output,
+        rootInput: this.rootInput,
+      };
+
+      let eventInput = eventType ? { type: eventType, data: eventData } : undefined;
+
+      let tArray = Array.isArray(transition) ? transition : [transition];
+      for (let t of tArray) {
+        if (!t.condition) {
+          // No condition so we always do it.
+          return t.state;
+        }
+
+        let cond = t.condition(transitionInput, eventInput);
+        if (cond === true) {
+          return t.state;
+        } else if (typeof cond === 'object') {
+          if (cond.transition === true) {
+            return t.state;
+          }
+        }
+      }
+    }
+  }
+
+  /** Run a transition for the given event, if one exists and the condition passes. */
+  private runTransition(eventType?: string, eventData?: unknown): boolean {
+    let nextState = this.resolveTransitions(eventType, eventData);
+    if (!nextState) {
+      return false;
+    }
+
+    const nextNode = this.config.nodes[nextState];
+    this.eventCb({
+      type: 'state_machine:transition',
+      data: {
+        from: this.currentState.state,
+        to: nextState,
+        input: this.currentState.input,
+        output: this.currentState.output,
+        event: eventType,
+        eventData: eventData,
+        final: nextNode.final,
+      },
+      source: this.name,
+      sourceNode: this.currentState.state,
+    });
+
+    this.currentState = {
+      state: nextState,
+      input: this.currentState.output,
+    };
+
+    return true;
+  }
+
+  /** Send an event to the state machine. */
+  send(type: string, data: unknown) {
+    if (this.machineStatus === 'running') {
+      this.eventQueue.push({ type, data });
+    } else {
+      let transitioned = this.runTransition(type, data);
+      if (transitioned) {
+        this.updatePostTransition();
+      }
+    }
   }
 }
 
-function validateConfig(config: StateMachine<any, any, any, any>) {
+function validateConfig(config: StateMachine<any, any>) {
   // TODO check that transition states all exist, etc.
 }

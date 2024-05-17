@@ -2,18 +2,13 @@ import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
-import { tracer } from '../tracing.js';
+import { addSpanEvent, runInSpan, toSpanAttributeValue, tracer } from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
 import { calculateCacheKey, type NodeResultCache } from '../cache.js';
-import { DagRunner } from './runner.js';
 import { Semaphore } from '../semaphore.js';
-import { Intervention } from '../interventions.js';
-
-export class NodeCancelledError extends Error {
-  name = 'CancelledError';
-}
+import { CancelledError } from '../errors.js';
 
 export interface RunnerSuccessResult<T> {
   type: 'success';
@@ -32,12 +27,10 @@ export interface DagNodeRunnerOptions<
   ROOTINPUT,
   INPUTS extends AnyInputs,
   OUTPUT,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
 > {
   name: string;
   dagName: string;
-  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
+  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   /** External input passed when running the DAG */
   rootInput: ROOTINPUT;
@@ -53,11 +46,8 @@ export class DagNodeRunner<
   ROOTINPUT,
   INPUTS extends AnyInputs,
   OUTPUT,
-  INTERVENTIONDATA = undefined,
-  INTERVENTIONRESPONSE = unknown,
 > extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];
-  intervention: [Intervention<INTERVENTIONDATA>];
   finish: [{ name: string; output: OUTPUT }];
   error: [Error];
   cancelled: [];
@@ -65,7 +55,7 @@ export class DagNodeRunner<
 }> {
   name: string;
   dagName: string;
-  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, INTERVENTIONDATA, INTERVENTIONRESPONSE>;
+  config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   state: DagNodeState;
   cache?: NodeResultCache;
@@ -93,14 +83,7 @@ export class DagNodeRunner<
     eventCb,
     autorun,
     semaphores,
-  }: DagNodeRunnerOptions<
-    CONTEXT,
-    ROOTINPUT,
-    INPUTS,
-    OUTPUT,
-    INTERVENTIONDATA,
-    INTERVENTIONRESPONSE
-  >) {
+  }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
     this.dagName = dagName;
@@ -132,23 +115,24 @@ export class DagNodeRunner<
   }
 
   setState(state: DagNodeState) {
+    if (this.state === state) {
+      return;
+    }
+
     this.state = state;
-    this.emit('state', { sourceNode: this.name, source: this.dagName, state });
+    this.eventCb({
+      type: 'dag:node_state',
+      data: { state },
+      source: this.dagName,
+      sourceNode: this.name,
+      meta: this.chronicleOptions?.defaults?.metadata,
+    });
   }
 
   /** `init` is called after the constructors have all been run, which is mostly a design
    *  concession to simplify making sure that all the parent node runners have been created first.
    **/
-  init(
-    parents: DagNodeRunner<
-      CONTEXT,
-      ROOTINPUT,
-      AnyInputs,
-      unknown,
-      INTERVENTIONDATA,
-      INTERVENTIONRESPONSE
-    >[]
-  ) {
+  init(parents: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>[]) {
     let parentSpan = opentelemetry.trace.getActiveSpan();
     if (parentSpan) {
       this.parentSpanContext = opentelemetry.trace.setSpan(
@@ -197,26 +181,23 @@ export class DagNodeRunner<
   }
 
   /** Return true if we should try running this node when starting up the runner, either from the start or when
-   * reviving the DAG from saved state. This excludes nodes which are waiting for an intervention response. */
+   * reviving the DAG from saved state. */
   readyToResume() {
-    return this.waiting.size === 0 && (this.state === 'waiting' || this.state === 'ready');
+    return this.waiting.size === 0 && this.stateReadyToRun();
   }
 
   /** Based only on the state, is this node runnable. This doesn't look at if the node is still waiting for some parent
    * nodes. */
   stateReadyToRun() {
-    return this.state === 'waiting' || this.state === 'ready' || this.state === 'intervention';
+    return this.state === 'waiting' || this.state === 'ready';
   }
 
-  /** Return true if we can run this node. This returns true for nodes that are waiting for an intervention response. */
+  /** Return true if we can run this node. */
   readyToRun() {
     return this.waiting.size === 0 && this.stateReadyToRun();
   }
 
-  async run(
-    triggeredFromParentFinished = false,
-    interventionResponse?: INTERVENTIONRESPONSE
-  ): Promise<boolean> {
+  async run(triggeredFromParentFinished = false): Promise<boolean> {
     const ready = this.readyToRun();
     if (triggeredFromParentFinished) {
       if (!ready) {
@@ -263,33 +244,20 @@ export class DagNodeRunner<
     };
 
     const parentContext = this.parentSpanContext ?? opentelemetry.context.active();
-    if (this.config.requiresIntervention) {
-      let intervention = this.config.requiresIntervention({
-        context: this.context,
-        input: this.inputs as INPUTS,
-        rootInput: this.rootInput,
-        response: interventionResponse,
-      });
-
-      if (intervention) {
-        this.setState('intervention');
-        const withId = { ...intervention, id: randomUUID() } as Intervention<INTERVENTIONDATA>;
-        sendEvent('dag:node_intervention', withId);
-        this.emit('intervention', withId);
-        return false;
-      }
-    }
-
     const semaphoreKey = this.config.semaphoreKey;
 
+    const acquiredSemaphores: boolean[] = [];
     try {
       await tracer.startActiveSpan(step, {}, parentContext, async (span) => {
         if (semaphoreKey && this.semaphores?.length) {
           this.setState('pendingSemaphore');
-          await tracer.startActiveSpan(
-            step + 'acquire semaphores',
-            { attributes: { semaphoreKey } },
-            () => Promise.all(this.semaphores!.map((s) => s.acquire(semaphoreKey)) ?? [])
+          await runInSpan(step + 'acquire semaphores', { attributes: { semaphoreKey } }, () =>
+            Promise.all(
+              this.semaphores!.map(async (s, i) => {
+                await s.acquire(semaphoreKey);
+                acquiredSemaphores[i] = true;
+              }) ?? []
+            )
           );
         }
 
@@ -319,16 +287,11 @@ export class DagNodeRunner<
               input: this.inputs as INPUTS,
               rootInput: this.rootInput,
               context: this.context,
-              interventionResponse,
               span,
               chronicleOptions,
               event: (type, data, spanEvent = true) => {
-                if (spanEvent && data != null && span.isRecording()) {
-                  const spanData = Object.fromEntries(
-                    Object.entries(data).map(([k, v]) => [k, toSpanAttributeValue(v)])
-                  );
-
-                  span.addEvent(type, spanData);
+                if (spanEvent) {
+                  addSpanEvent(span, type, data);
                 }
 
                 sendEvent(type, data);
@@ -336,7 +299,7 @@ export class DagNodeRunner<
               isCancelled: () => this.state === 'cancelled',
               exitIfCancelled: () => {
                 if (this.state === 'cancelled') {
-                  throw new NodeCancelledError();
+                  throw new CancelledError();
                 }
               },
             });
@@ -356,7 +319,7 @@ export class DagNodeRunner<
             this.emit('finish', { name: this.name, output });
           }
         } catch (e) {
-          if (e instanceof NodeCancelledError) {
+          if (e instanceof CancelledError) {
             // Don't emit an error if we were cancelled
           } else {
             let err = e as Error;
@@ -384,13 +347,5 @@ export class DagNodeRunner<
 
     // true just indicates that we ran, with no bearing on success or failure
     return true;
-  }
-}
-
-function toSpanAttributeValue(v: AttributeValue | object): AttributeValue {
-  if (v && typeof v === 'object' && !Array.isArray(v)) {
-    return JSON.stringify(v);
-  } else {
-    return v;
   }
 }
