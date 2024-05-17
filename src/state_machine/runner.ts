@@ -2,7 +2,6 @@ import { EventEmitter } from 'events';
 import * as opentelemetry from '@opentelemetry/api';
 import { randomUUID } from 'crypto';
 import { StateMachine, StateMachineStatus, TransitionGuardInput } from './types.js';
-import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
@@ -19,9 +18,8 @@ import { CancelledError } from '../errors.js';
 
 export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   config: StateMachine<CONTEXT, ROOTINPUT>;
-  /** A name for this instance of the state machine. */
+  /** Override the name for this instance of the state machine. */
   name?: string;
-  cache?: NodeResultCache;
   context: CONTEXT;
   /** Semaphores which can be used to rate limit operations by the DAG. This accepts multiple Semaphores, which
    * can be used to provide a semaphore for global operations and another one for this particular DAG, for example. */
@@ -59,7 +57,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   config: StateMachine<CONTEXT, ROOTINPUT>;
   chronicleOptions?: ChronicleClientOptions;
   eventCb: WorkflowEventCallback;
-  cache?: NodeResultCache;
   semaphores?: Semaphore[];
   parentSpanContext?: opentelemetry.Context;
   stepIndex = 0;
@@ -72,7 +69,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     validateConfig(options.config);
     this.config = options.config;
     this.context = options.context;
-    this.cache = options.cache;
     this.rootInput = options.input;
     this.chronicleOptions = options.chronicle;
     this.semaphores = options.semaphores;

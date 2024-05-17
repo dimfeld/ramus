@@ -7,7 +7,7 @@ import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
 import { calculateCacheKey, type NodeResultCache } from '../cache.js';
-import { Semaphore } from '../semaphore.js';
+import { Semaphore, acquireSemaphores } from '../semaphore.js';
 import { CancelledError } from '../errors.js';
 
 export interface RunnerSuccessResult<T> {
@@ -246,18 +246,15 @@ export class DagNodeRunner<
     const parentContext = this.parentSpanContext ?? opentelemetry.context.active();
     const semaphoreKey = this.config.semaphoreKey;
 
-    const acquiredSemaphores: boolean[] = [];
+    let semRelease: (() => Promise<void>) | undefined;
     try {
       await tracer.startActiveSpan(step, {}, parentContext, async (span) => {
         if (semaphoreKey && this.semaphores?.length) {
           this.setState('pendingSemaphore');
-          await runInSpan(step + 'acquire semaphores', { attributes: { semaphoreKey } }, () =>
-            Promise.all(
-              this.semaphores!.map(async (s, i) => {
-                await s.acquire(semaphoreKey);
-                acquiredSemaphores[i] = true;
-              }) ?? []
-            )
+          semRelease = await runInSpan(
+            step + 'acquire semaphores',
+            { attributes: { semaphoreKey } },
+            () => acquireSemaphores(this.semaphores!, semaphoreKey)
           );
         }
 
@@ -338,11 +335,7 @@ export class DagNodeRunner<
         }
       });
     } finally {
-      if (semaphoreKey && this.semaphores) {
-        for (let sem of this.semaphores) {
-          sem.release(semaphoreKey);
-        }
-      }
+      semRelease?.();
     }
 
     // true just indicates that we ran, with no bearing on success or failure

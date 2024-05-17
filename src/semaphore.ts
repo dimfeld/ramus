@@ -85,3 +85,35 @@ export class LocalSemaphore implements Semaphore {
     }
   }
 }
+
+/** Acquire multiple semaphores concurrently. */
+export async function acquireSemaphores(semaphores: Semaphore[], key: string) {
+  let acquired: boolean[] = [];
+  let error = false;
+  try {
+    await Promise.all(
+      semaphores.map(async (s, i) => {
+        await s.acquire(key);
+        if (error) {
+          // An error occurred somewhere else so immeidately release this semaphore.
+          await s.release(key);
+        } else {
+          acquired[i] = true;
+        }
+      })
+    );
+  } catch (e) {
+    // Release the already-acquired semaphores, and flag the error so that any which finish
+    // acquiring after this can release on their own.
+    error = true;
+    for (let i = 0; i < semaphores.length; i++) {
+      if (acquired[i]) {
+        semaphores[i].release(key);
+      }
+    }
+
+    throw e;
+  }
+
+  return () => Promise.all(semaphores.map((s) => s.release(key))).then(() => {});
+}
