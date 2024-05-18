@@ -10,6 +10,7 @@ import { Semaphore } from '../semaphore.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
 
 export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = unknown> {
+  name?: string;
   dag: Dag<CONTEXT, ROOTINPUT> | CompiledDag<CONTEXT, ROOTINPUT, OUTPUT>;
   input: ROOTINPUT;
   cache?: NodeResultCache;
@@ -50,6 +51,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   _finished: Promise<OUTPUT> | undefined;
 
   constructor({
+    name,
     dag,
     context,
     input,
@@ -80,7 +82,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
       semaphores,
     });
 
-    this.name = dag.config.name;
+    this.name = name ? `${name}: ${dag.config.name}` : dag.config.name;
     this.tolerateFailures = dag.config.tolerateFailures ?? false;
     this.runners = runners;
     this.outputNode = outputNode;

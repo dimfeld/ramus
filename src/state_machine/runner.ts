@@ -1,7 +1,12 @@
 import { EventEmitter } from 'events';
 import * as opentelemetry from '@opentelemetry/api';
 import { randomUUID } from 'crypto';
-import { StateMachine, StateMachineStatus, TransitionGuardInput } from './types.js';
+import {
+  StateMachine,
+  StateMachineNodeInput,
+  StateMachineStatus,
+  TransitionGuardInput,
+} from './types.js';
 import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
@@ -20,7 +25,10 @@ export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   config: StateMachine<CONTEXT, ROOTINPUT>;
   /** Override the name for this instance of the state machine. */
   name?: string;
-  context: CONTEXT;
+  /** Start from a different initial state than the config indicates. */
+  initial?: string;
+  /** Use a different context than the default. */
+  context?: CONTEXT;
   /** Semaphores which can be used to rate limit operations by the DAG. This accepts multiple Semaphores, which
    * can be used to provide a semaphore for global operations and another one for this particular DAG, for example. */
   semaphores?: Semaphore[];
@@ -28,9 +36,6 @@ export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   chronicle?: ChronicleClientOptions;
   /** A function that can take events from the running DAG */
   eventCb?: WorkflowEventCallback;
-  /** A function that returns if the DAG should run nodes whenever they become ready, or wait for an external source to
-   * run them. */
-  autorun?: () => boolean;
   input: ROOTINPUT;
 }
 
@@ -46,6 +51,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
   currentState: {
     state: string;
+    previousState?: string;
     input?: any;
     /** A cache of the output of the current node, for when we aren't transitioning right away. */
     output?: unknown;
@@ -60,7 +66,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   semaphores?: Semaphore[];
   parentSpanContext?: opentelemetry.Context;
   stepIndex = 0;
-  autorun: () => boolean;
   eventQueue: { type: string; data: unknown }[] = [];
   _finished: Promise<OUTPUT> | undefined;
 
@@ -68,13 +73,17 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     super();
     validateConfig(options.config);
     this.config = options.config;
-    this.context = options.context;
+    this.context = options.context ?? this.config.context();
     this.rootInput = options.input;
     this.chronicleOptions = options.chronicle;
     this.semaphores = options.semaphores;
     this.eventCb = options.eventCb ?? (() => {});
-    this.autorun = options.autorun ?? (() => true);
-    this.name = options.name || options.config.name;
+    this.name = options.name ? `${options.name}: ${options.config.name}` : options.config.name;
+
+    const initial = options.initial ?? options.config.initial;
+    if (!this.config.nodes[initial]) {
+      throw new Error(`Initial state ${initial} does not exist`);
+    }
 
     this.currentState = { state: options.config.initial, input: options.input };
     let parentSpan = opentelemetry.trace.getActiveSpan();
@@ -120,7 +129,12 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
       this.parentSpanContext,
       async () => {
         while (this.canStep()) {
-          await this.step();
+          let transitioned = await this.step();
+          if (this.machineStatus === 'error' && !transitioned) {
+            // We hit an error but there is no error state, so halt for now. The state
+            // machine can be manually retried.
+            break;
+          }
         }
       }
     );
@@ -137,7 +151,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     }
 
     const node = this.config.nodes[this.currentState.state];
-    if (node.run || node.transition?.['']) {
+    if (node.run || typeof node.transition === 'string' || node.transition?.['']) {
       return true;
     }
 
@@ -198,7 +212,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           }
           this.setStatus('running');
 
-          let nodeInput: NodeInput<CONTEXT, ROOTINPUT, any> = {
+          let nodeInput: StateMachineNodeInput<CONTEXT, ROOTINPUT, any> = {
             context: this.context,
             event: sendEvent,
             isCancelled: () => this.machineStatus === 'cancelled',
@@ -207,6 +221,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
                 throw new CancelledError();
               }
             },
+            previousState: this.currentState.previousState,
             input: this.currentState.input,
             rootInput: this.rootInput,
             span,
@@ -300,6 +315,12 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   /** Figure out which transition to run for an event. */
   private resolveTransitions(eventType?: string, eventData?: unknown): string | undefined {
     const node = this.config.nodes[this.currentState.state];
+
+    if (typeof node.transition === 'string') {
+      // This node always transitions to this particular state so there's nothing to check.
+      return node.transition;
+    }
+
     const transition = node.transition?.[eventType ?? ''];
 
     if (!transition) {
@@ -353,6 +374,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     });
 
     this.currentState = {
+      previousState: this.currentState.state,
       state: nextState,
       input,
     };
@@ -383,5 +405,41 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 }
 
 function validateConfig(config: StateMachine<any, any>) {
-  // TODO check that transition states all exist, etc.
+  if (!config.initial) {
+    throw new Error(`No initial state`);
+  }
+
+  if (!config.nodes[config.initial]) {
+    throw new Error(`Initial state ${config.initial} does not exist`);
+  }
+
+  if (config.errorState && !config.nodes[config.errorState]) {
+    throw new Error(`Error state ${config.errorState} does not exist`);
+  }
+
+  for (let [state, node] of Object.entries(config.nodes)) {
+    if (node.errorState && !config.nodes[node.errorState]) {
+      throw new Error(`Error state ${config.errorState} does not exist`);
+    }
+
+    if (typeof node.transition === 'string') {
+      if (!config.nodes[node.transition]) {
+        throw new Error(`State ${state} Transition target ${node.transition} does not exist`);
+      }
+    } else {
+      for (let transition of Object.values(node.transition ?? {})) {
+        if (typeof transition === 'string') {
+          if (!config.nodes[transition]) {
+            throw new Error(`State ${state} Transition target ${transition} does not exist`);
+          }
+        } else if (Array.isArray(transition)) {
+          for (let t of transition) {
+            if (!config.nodes[t.state]) {
+              throw new Error(`State ${state} Transition target ${t} does not exist`);
+            }
+          }
+        }
+      }
+    }
+  }
 }

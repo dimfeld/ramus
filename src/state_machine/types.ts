@@ -23,14 +23,22 @@ export interface StateMachine<CONTEXT extends object, ROOTINPUT> {
   /** Transition to this state if a node throws an exception. */
   errorState?: string;
 
+  /** Generate a default context object. */
+  context: () => CONTEXT;
+
   /** Where the state machine should start */
   initial: string;
   nodes: Record<string, StateMachineNode<CONTEXT, ROOTINPUT, any, any>>;
 }
 
+export interface StateMachineNodeInput<CONTEXT extends object, ROOTINPUT, INPUTS>
+  extends NodeInput<CONTEXT, ROOTINPUT, INPUTS> {
+  previousState?: string;
+}
+
 export interface StateMachineNode<CONTEXT extends object, ROOTINPUT, INPUTS, OUTPUT> {
   /** Run the code for this node, if any. */
-  run?: (input: NodeInput<CONTEXT, ROOTINPUT, INPUTS>) => Promise<OUTPUT>;
+  run?: (input: StateMachineNodeInput<CONTEXT, ROOTINPUT, INPUTS>) => Promise<OUTPUT>;
 
   /** Mark this state as a final state.  Final states can still have transitions, such as if this
    * state machine interacts with a user and may or may not receive a response. This is only used to
@@ -40,12 +48,16 @@ export interface StateMachineNode<CONTEXT extends object, ROOTINPUT, INPUTS, OUT
   /** Transition to this state if a node throws an exception. Overrides the global errorState value. */
   errorState?: string;
 
-  /** Mapping of events to transitions. Use the empty string to indicate a transition that always fires. */
-  transition?: Record<
-    string,
-    | StateMachineTransition<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>
-    | Array<StateMachineTransition<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>>
-  >;
+  /** Mapping of events to transitions. Use the empty string to indicate a transition that always fires.
+   *  If this state always proceeds to a single other state, this can be a string with the name of that state.
+   * */
+  transition?:
+    | string
+    | Record<
+        string,
+        | StateMachineTransition<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>
+        | Array<StateMachineTransition<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>>
+      >;
 
   semaphoreKey?: string;
 
