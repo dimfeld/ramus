@@ -148,9 +148,6 @@ test('error without error state', async () => {
     input: 1,
   });
 
-  // Bun will fail the test if we don't handle this
-  machine.on('error', () => {});
-
   await machine.run();
   // We should be stopped at the failed state.
   expect(machine.canStep()).toBe(true);
@@ -201,9 +198,6 @@ test('error state', async () => {
     config,
     input: 1,
   });
-
-  // Bun will fail the test if we don't handle this
-  machine.on('error', () => {});
 
   await machine.run();
   expect(machine.canStep()).toBe(false);

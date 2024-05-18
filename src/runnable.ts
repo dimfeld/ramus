@@ -2,7 +2,9 @@ import { EventEmitter } from 'events';
 
 export type RunnableEvents<OUTPUT> = {
   cancelled: [];
-  error: [Error];
+  // We use this instead of 'error' because an unhandled 'error' emit will crash the process, but we have multiple ways
+  // of handling errors so don't necessarily need the user to handle 'error'.
+  'orchard:error': [Error];
   finish: [OUTPUT];
 } & Record<string, any[]>;
 

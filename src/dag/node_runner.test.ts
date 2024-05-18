@@ -16,7 +16,7 @@ function outputCatcher(runner: DagNodeRunner<any, any, any, any>) {
       reject(new Error('parentError'));
     });
 
-    runner.on('error', (e) => {
+    runner.on('orchard:error', (e) => {
       finished = true;
       reject(e);
     });

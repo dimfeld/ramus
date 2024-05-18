@@ -97,7 +97,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         this.once('cancelled', () => {
           reject(new Error('Cancelled'));
         });
-        this.once('error', reject);
+        this.once('orchard:error', reject);
       });
     }
 
@@ -117,7 +117,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
       for (let runner of this.runners.values()) {
         if (!this.tolerateFailures) {
-          runner.on('error', (e) => {
+          runner.on('orchard:error', (e) => {
             this.eventCb({
               data: { error: e },
               source: this.name,
@@ -127,15 +127,15 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             });
             // Make sure to emit error before we cancel, so that anything listening to both will know about the
             // error first.
-            this.emit('error', e);
+            this.emit('orchard:error', e);
             this.cancel(false);
           });
         }
       }
 
-      this.outputNode.on('error', (e) => {
+      this.outputNode.on('orchard:error', (e) => {
         this.cancel(false);
-        this.emit('error', e);
+        this.emit('orchard:error', e);
       });
 
       this.outputNode.on('finish', (e) => {

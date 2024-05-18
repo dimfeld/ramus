@@ -102,7 +102,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   get finished() {
     if (!this._finished) {
       this._finished = new Promise((resolve, reject) => {
-        this.once('error', reject);
+        this.once('orchard:error', reject);
         this.once('cancelled', () => reject(new Error('Cancelled')));
         this.once('finish', resolve);
       });
@@ -273,7 +273,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
           this.setStatus('error');
           sendEvent('state_machine:error', { error: e });
-          this.emit('error', err);
+          this.emit('orchard:error', err);
 
           span.recordException(err);
           span.setStatus({ code: opentelemetry.SpanStatusCode.ERROR });
