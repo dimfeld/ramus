@@ -1,0 +1,48 @@
+{
+  "name": "@dimfeld/orchard-tools",
+  "description": "Agent tools",
+  "module": "dist/index.js",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "files": [
+    "package.json",
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc && publint",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.10",
+    "@types/bun": "latest",
+    "@types/jsdom": "^21.1.6",
+    "jsonschema": "^1.4.1",
+    "publint": "^0.2.7"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^9.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@extractus/article-extractor": "^8.0.10",
+    "@mozilla/readability": "^0.5.0",
+    "@opentelemetry/api": "^1.8.0",
+    "chronicle-proxy": "file:../../../chronicle/js-client",
+    "jsdom": "^24.0.0",
+    "ky": "^1.2.4",
+    "wtf-plugin-disambig": "^1.0.0",
+    "wtf-plugin-markdown": "^1.0.1",
+    "wtf_wikipedia": "^10.3.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.0"
+  }
+}
