@@ -87,7 +87,10 @@ export class LocalSemaphore implements Semaphore {
 }
 
 /** Acquire multiple semaphores concurrently. */
-export async function acquireSemaphores(semaphores: Semaphore[], key: string) {
+export async function acquireSemaphores(
+  semaphores: Semaphore[],
+  key: string
+): Promise<SemaphoreReleaser> {
   let acquired: boolean[] = [];
   let error = false;
   try {
@@ -117,3 +120,5 @@ export async function acquireSemaphores(semaphores: Semaphore[], key: string) {
 
   return () => Promise.all(semaphores.map((s) => s.release(key))).then(() => {});
 }
+
+export type SemaphoreReleaser = () => Promise<void>;

@@ -6,6 +6,7 @@ import { Runnable } from '../runnable.js';
 export type StateMachineStatus =
   | 'initial'
   | 'ready'
+  | 'pendingSemaphore'
   | 'running'
   | 'waitingForEvent'
   | 'final'

@@ -18,7 +18,7 @@ export type DagNodeFinishEvent = WorkflowEventBase<'dag:node_finish', { output: 
 export type DagNodeErrorEvent = WorkflowEventBase<'dag:node_error', { error: Error }>;
 export type DagNodeStateEvent = WorkflowEventBase<'dag:node_state', { state: DagNodeState }>;
 
-export type StateMachineStartEvent = WorkflowEventBase<'state_machine:start', { input: unknown }>;
+export type StateMachineStartEvent = WorkflowEventBase<'state_machine:start', {}>;
 export type StateMachineTransitionEvent = WorkflowEventBase<
   'state_machine:transition',
   {
@@ -40,7 +40,9 @@ export type FrameworkWorkflowEvent =
   | DagNodeStartEvent
   | DagNodeFinishEvent
   | DagNodeErrorEvent
-  | DagNodeStateEvent;
+  | DagNodeStateEvent
+  | StateMachineStartEvent
+  | StateMachineTransitionEvent;
 
 /** Any workflow event, covering any event type */
 export type WorkflowEvent = WorkflowEventBase<string, unknown>;
@@ -56,6 +58,8 @@ export function isFrameworkEvent(event: WorkflowEvent): event is FrameworkWorkfl
     'dag:node_finish',
     'dag:node_error',
     'dag:node_state',
+    'state_machine:start',
+    'state_machine:transition',
   ].includes(event.type);
 }
 

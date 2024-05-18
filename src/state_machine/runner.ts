@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import * as opentelemetry from '@opentelemetry/api';
 import { randomUUID } from 'crypto';
 import { StateMachine, StateMachineStatus, TransitionGuardInput } from './types.js';
-import { Semaphore } from '../semaphore.js';
+import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
 import {
@@ -145,21 +145,20 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   }
 
   step() {
-    // TODO go to error state when we get an error
-    // TODO semaphores
-    // TODO event logging
     this.stepIndex += 1;
     return runInSpan(
       `machine ${this.name} ${this.currentState}`,
       {
         attributes: {
+          machine: this.name,
+          step: this.currentState.state,
           step_index: this.stepIndex,
           input: toSpanAttributeValue(this.currentState.input),
           context: toSpanAttributeValue(this.context),
         },
       },
       async (span) => {
-        this.machineStatus = 'running';
+        let config = this.config.nodes[this.currentState.state];
 
         let chronicleOptions = {
           ...this.chronicleOptions,
@@ -173,72 +172,109 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           },
         };
 
-        let nodeInput: NodeInput<CONTEXT, ROOTINPUT, any> = {
-          context: this.context,
-          event: (type, data, spanEvent = true) => {
-            if (spanEvent) {
-              addSpanEvent(span, type, data);
-            }
+        const sendEvent = (type: string, data: unknown, spanEvent = true) => {
+          if (spanEvent) {
+            addSpanEvent(span, type, data);
+          }
 
-            this.eventCb({
-              type,
-              data,
-              meta: chronicleOptions.defaults.metadata,
-              source: this.name,
-              sourceNode: this.currentState.state,
-            });
-          },
-          isCancelled: () => this.machineStatus === 'cancelled',
-          exitIfCancelled: () => {
-            if (this.machineStatus === 'cancelled') {
-              throw new CancelledError();
-            }
-          },
-          input: this.currentState.input,
-          rootInput: this.rootInput,
-          span,
-          chronicleOptions,
+          this.eventCb({
+            type,
+            data,
+            meta: chronicleOptions.defaults.metadata,
+            source: this.name,
+            sourceNode: this.currentState.state,
+          });
         };
 
-        let config = this.config.nodes[this.currentState.state];
-
-        if (config.run) {
-          this.currentState.output = await config.run(nodeInput);
-          span.setAttribute('output', toSpanAttributeValue(this.currentState.output as object));
+        if (this.machineStatus === 'initial') {
+          sendEvent('state_machine:start', {}, false);
         }
 
-        // If some events were queued up while running, then try applying them now.
-        let transitioned = false;
-        if (this.eventQueue?.length) {
-          let eventQueue = this.eventQueue;
-          this.eventQueue = [];
-          for (let { type, data } of eventQueue) {
-            let t = this.runTransition(type, data);
-            if (t) {
-              transitioned = true;
-              break;
+        let semRelease: SemaphoreReleaser | undefined;
+        try {
+          if (this.semaphores?.length && config.semaphoreKey) {
+            this.setStatus('pendingSemaphore');
+            semRelease = await acquireSemaphores(this.semaphores, config.semaphoreKey);
+          }
+          this.setStatus('running');
+
+          let nodeInput: NodeInput<CONTEXT, ROOTINPUT, any> = {
+            context: this.context,
+            event: sendEvent,
+            isCancelled: () => this.machineStatus === 'cancelled',
+            exitIfCancelled: () => {
+              if (this.machineStatus === 'cancelled') {
+                throw new CancelledError();
+              }
+            },
+            input: this.currentState.input,
+            rootInput: this.rootInput,
+            span,
+            chronicleOptions,
+          };
+
+          if (config.run) {
+            this.currentState.output = await config.run(nodeInput);
+            span.setAttribute('output', toSpanAttributeValue(this.currentState.output as object));
+          }
+
+          // If some events were queued up while running, then try applying them now.
+          let transitioned = false;
+          if (this.eventQueue?.length) {
+            let eventQueue = this.eventQueue;
+            this.eventQueue = [];
+            for (let { type, data } of eventQueue) {
+              let t = this.runTransition(type, data);
+              if (t) {
+                transitioned = true;
+                break;
+              }
             }
           }
-        }
 
-        if (!transitioned) {
-          transitioned = this.runTransition();
-        }
+          if (!transitioned) {
+            // None of the queued events triggered a transition, so just do the normal transition logic.
+            transitioned = this.runTransition();
+          }
 
-        if (transitioned) {
-          this.updatePostTransition();
-        } else {
-          this.setStatus('waitingForEvent');
-        }
+          if (transitioned) {
+            this.updatePostTransition();
+          } else {
+            this.setStatus('waitingForEvent');
+          }
 
-        return transitioned;
+          return transitioned;
+        } catch (e) {
+          if (e instanceof CancelledError) {
+            return false;
+          }
+
+          let err = e as Error;
+
+          let errorState = config?.errorState ?? this.config.errorState;
+          if (errorState) {
+            this.transitionTo(errorState, e);
+          }
+
+          this.setStatus('error');
+          sendEvent('state_machine:error', { error: e });
+          this.emit('error', err);
+
+          span.recordException(err);
+          span.setStatus({ code: opentelemetry.SpanStatusCode.ERROR });
+          span.setAttribute('error', err.message ?? 'true');
+
+          return Boolean(errorState);
+        } finally {
+          semRelease?.();
+        }
       }
     );
   }
 
   /** Update the machine's generic status. */
   private setStatus(newStatus: StateMachineStatus) {
-    if (this.machineStatus === newStatus) {
+    if (this.machineStatus === newStatus || this.machineStatus === 'cancelled') {
       return;
     }
 
@@ -299,13 +335,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     }
   }
 
-  /** Run a transition for the given event, if one exists and the condition passes. */
-  private runTransition(eventType?: string, eventData?: unknown): boolean {
-    let nextState = this.resolveTransitions(eventType, eventData);
-    if (!nextState) {
-      return false;
-    }
-
+  private transitionTo(nextState: string, input: unknown, eventType?: string, eventData?: unknown) {
     const nextNode = this.config.nodes[nextState];
     this.eventCb({
       type: 'state_machine:transition',
@@ -324,9 +354,18 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
     this.currentState = {
       state: nextState,
-      input: this.currentState.output,
+      input,
     };
+  }
 
+  /** Run a transition for the given event, if one exists and the condition passes. */
+  private runTransition(eventType?: string, eventData?: unknown): boolean {
+    let nextState = this.resolveTransitions(eventType, eventData);
+    if (!nextState) {
+      return false;
+    }
+
+    this.transitionTo(nextState, this.currentState.output, eventType, eventData);
     return true;
   }
 
