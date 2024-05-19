@@ -48,7 +48,7 @@ export class DagNodeRunner<
 > extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];
   finish: [{ name: string; output: OUTPUT }];
-  'orchard:error': [Error];
+  'ramus:error': [Error];
   cancelled: [];
   parentError: [];
 }> {
@@ -107,7 +107,7 @@ export class DagNodeRunner<
         this.once('cancelled', () => {
           reject(new Error('Cancelled'));
         });
-        this.once('orchard:error', reject);
+        this.once('ramus:error', reject);
       });
     }
     return this._finished;
@@ -168,7 +168,7 @@ export class DagNodeRunner<
       this.waiting.add(parent.name);
 
       parent.once('finish', handleFinishedParent);
-      parent.once('orchard:error', () => handleParentError(parent.name));
+      parent.once('ramus:error', () => handleParentError(parent.name));
       parent.once('parentError', () => handleParentError(parent.name));
     }
   }
@@ -322,7 +322,7 @@ export class DagNodeRunner<
             this.setState('error');
             this.result = { type: 'error', error: err };
             notify('dag:node_error', { error: err });
-            this.emit('orchard:error', err);
+            this.emit('ramus:error', err);
 
             span.recordException(err);
             span.setAttribute('error', err?.message ?? 'true');

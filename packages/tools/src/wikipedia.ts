@@ -9,7 +9,7 @@ wtf.extend(wtf_plugin_markdown);
 wtf.extend(wtf_disambig);
 
 async function getByTitle(title: string) {
-  let doc = await wtf.fetch(title, { 'Api-User-Agent': 'Orchard/1.0', lang: 'en', title });
+  let doc = await wtf.fetch(title, { 'Api-User-Agent': 'Ramus/1.0', lang: 'en', title });
   if (Array.isArray(doc)) {
     // Shouldn't return an array when we're just fetching 1 URL, but just in case
     return doc[0];

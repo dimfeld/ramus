@@ -1,5 +1,5 @@
 {
-  "name": "@dimfeld/orchard-tools",
+  "name": "@ramus/tools",
   "description": "Agent tools",
   "module": "dist/index.js",
   "type": "module",

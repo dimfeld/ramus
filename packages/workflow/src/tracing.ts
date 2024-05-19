@@ -6,7 +6,7 @@ import opentelemetry, {
   SpanStatusCode,
 } from '@opentelemetry/api';
 
-export const tracer = opentelemetry.trace.getTracer('orchard');
+export const tracer = opentelemetry.trace.getTracer('ramus');
 
 /** Run a function in a span, and record errors if they occur */
 export async function runInSpanWithParent<T>(

@@ -1,5 +1,5 @@
 {
-  "name": "@dimfeld/orchard-workflow",
+  "name": "@ramus/workflow",
   "description": "Workflow engine and agent framework",
   "module": "dist/index.js",
   "type": "module",

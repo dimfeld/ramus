@@ -8,10 +8,10 @@ export interface NodeResultCache {
   clear: (node?: string) => void | Promise<void>;
 }
 
-/** A cache implementation that persists data to a SQLite Database. This adds an `orchard_cache` table to the database */
+/** A cache implementation that persists data to a SQLite Database. This adds an `ramus_cache` table to the database */
 export function betterSqliteCache(db: Database) {
   db.exec(
-    'CREATE TABLE IF NOT EXISTS orchard_cache (node TEXT NOT NULL, key TEXT NOT NULL, value TEXT, created_at int, PRIMARY KEY (node, key))'
+    'CREATE TABLE IF NOT EXISTS ramus_cache (node TEXT NOT NULL, key TEXT NOT NULL, value TEXT, created_at int, PRIMARY KEY (node, key))'
   );
 
   return {
@@ -20,20 +20,20 @@ export function betterSqliteCache(db: Database) {
         .prepare<
           unknown[],
           { value: string }
-        >(`SELECT value FROM orchard_cache WHERE node = ? AND key = ?`)
+        >(`SELECT value FROM ramus_cache WHERE node = ? AND key = ?`)
         .get(node, key);
       return data?.value;
     },
     set: (node: string, key: string, value: string) => {
       db.prepare(
-        `INSERT OR REPLACE INTO orchard_cache (node, key, value, created_at) VALUES (?, ?, ?, ?)`
+        `INSERT OR REPLACE INTO ramus_cache (node, key, value, created_at) VALUES (?, ?, ?, ?)`
       ).run(node, key, value, Date.now());
     },
     clear: (node?: string) => {
       if (node) {
-        db.prepare(`DELETE FROM orchard_cache WHERE node = ?`).run(node);
+        db.prepare(`DELETE FROM ramus_cache WHERE node = ?`).run(node);
       } else {
-        db.prepare(`DELETE FROM orchard_cache`).run();
+        db.prepare(`DELETE FROM ramus_cache`).run();
       }
     },
   };

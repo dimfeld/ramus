@@ -1,7 +1,12 @@
 {
-  "name": "orchard",
+  "name": "ramus",
   "version": "0.1.0",
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "dependencies": {
+    "bufferutil": "^4.0.8",
+    "utf-8-validate": "^6.0.4",
+    "zlib-sync": "^0.1.9"
+  }
 }
