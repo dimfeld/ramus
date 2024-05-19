@@ -1,6 +1,5 @@
 import { Schema } from 'jsonschema';
 import { NodeInput } from '../types.js';
-import { Runnable } from '../runnable.js';
 
 /** A generic idea of what the state machine is doing. */
 export type StateMachineStatus =
@@ -34,6 +33,7 @@ export interface StateMachine<CONTEXT extends object, ROOTINPUT> {
 export interface StateMachineNodeInput<CONTEXT extends object, ROOTINPUT, INPUTS>
   extends NodeInput<CONTEXT, ROOTINPUT, INPUTS> {
   previousState?: string;
+  event?: { type: string; data: unknown };
 }
 
 export interface StateMachineNode<CONTEXT extends object, ROOTINPUT, INPUTS, OUTPUT> {
@@ -55,8 +55,8 @@ export interface StateMachineNode<CONTEXT extends object, ROOTINPUT, INPUTS, OUT
     | string
     | Record<
         string,
-        | StateMachineTransition<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>
-        | Array<StateMachineTransition<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>>
+        | StateMachineTransition<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, any>
+        | Array<StateMachineTransition<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, any>>
       >;
 
   semaphoreKey?: string;
@@ -64,21 +64,29 @@ export interface StateMachineNode<CONTEXT extends object, ROOTINPUT, INPUTS, OUT
   cacheable?: boolean;
 }
 
-export interface TransitionGuardInput<CONTEXT, ROOTINPUT, INPUTS, OUTPUT> {
+export interface TransitionGuardInput<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, EVENTDATA = unknown> {
   context: CONTEXT;
   output: OUTPUT;
   input: INPUTS;
   rootInput: ROOTINPUT;
+  event?: { type: string; data: EVENTDATA };
 }
 
-export type StateMachineTransitionGuard<CONTEXT extends object, ROOTINPUT, INPUTS, OUTPUT> = (
-  input: TransitionGuardInput<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>,
+export type StateMachineTransitionGuard<
+  CONTEXT extends object,
+  ROOTINPUT,
+  INPUTS,
+  OUTPUT,
+  EVENTDATA,
+> = (
+  input: TransitionGuardInput<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, EVENTDATA>,
   event?: { type: string; data: unknown }
 ) =>
   | boolean
+  | undefined
   | {
-      /** If true, run this transition */
-      transition: boolean;
+      /** If true or omitted, run this transition */
+      transition?: boolean;
       // TODO Not implemented yet
       // /** If set, wait this long to trigger the transition. Other events can arrive and trigger a different
       //  * transition in the meantime. */
@@ -86,9 +94,9 @@ export type StateMachineTransitionGuard<CONTEXT extends object, ROOTINPUT, INPUT
     };
 
 /** A state machine transition. */
-export type StateMachineTransition<CONTEXT extends object, ROOTINPUT, INPUTS, OUTPUT> = {
+export type StateMachineTransition<CONTEXT extends object, ROOTINPUT, INPUTS, OUTPUT, EVENTDATA> = {
   /** The destination state */
   state: string;
   /** Trigger this transition if the condition is true */
-  condition?: StateMachineTransitionGuard<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
+  condition?: StateMachineTransitionGuard<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, EVENTDATA>;
 };

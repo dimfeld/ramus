@@ -1,6 +1,5 @@
 import { EventEmitter } from 'events';
 import * as opentelemetry from '@opentelemetry/api';
-import { randomUUID } from 'crypto';
 import {
   StateMachine,
   StateMachineNodeInput,
@@ -10,15 +9,8 @@ import {
 import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
-import {
-  addSpanEvent,
-  runInSpan,
-  runInSpanWithParent,
-  toSpanAttributeValue,
-  tracer,
-} from '../tracing.js';
+import { addSpanEvent, runInSpan, runInSpanWithParent, toSpanAttributeValue } from '../tracing.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
-import { NodeInput } from '../types.js';
 import { CancelledError } from '../errors.js';
 
 export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
@@ -53,6 +45,8 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     state: string;
     previousState?: string;
     input?: any;
+    // The event that caused the transition to this node, if any
+    event?: { type: string; data: unknown };
     /** A cache of the output of the current node, for when we aren't transitioning right away. */
     output?: unknown;
   };
@@ -186,7 +180,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           },
         };
 
-        const sendEvent = (type: string, data: unknown, spanEvent = true) => {
+        const notify = (type: string, data: unknown, spanEvent = true) => {
           if (spanEvent) {
             addSpanEvent(span, type, data);
           }
@@ -201,7 +195,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         };
 
         if (this.machineStatus === 'initial') {
-          sendEvent('state_machine:start', {}, false);
+          notify('state_machine:start', {}, false);
         }
 
         let semRelease: SemaphoreReleaser | undefined;
@@ -214,7 +208,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
           let nodeInput: StateMachineNodeInput<CONTEXT, ROOTINPUT, any> = {
             context: this.context,
-            event: sendEvent,
+            notify,
             isCancelled: () => this.machineStatus === 'cancelled',
             exitIfCancelled: () => {
               if (this.machineStatus === 'cancelled') {
@@ -223,6 +217,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             },
             previousState: this.currentState.previousState,
             input: this.currentState.input,
+            event: this.currentState.event,
             rootInput: this.rootInput,
             span,
             chronicleOptions,
@@ -272,7 +267,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           }
 
           this.setStatus('error');
-          sendEvent('state_machine:error', { error: e });
+          notify('state_machine:error', { error: e }, false);
           this.emit('orchard:error', err);
 
           span.recordException(err);
@@ -333,6 +328,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         input: this.currentState.input,
         output: this.currentState.output,
         rootInput: this.rootInput,
+        event: eventType ? { type: eventType, data: eventData } : undefined,
       };
 
       let eventInput = eventType ? { type: eventType, data: eventData } : undefined;
@@ -348,7 +344,8 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         if (cond === true) {
           return t.state;
         } else if (typeof cond === 'object') {
-          if (cond.transition === true) {
+          // If you return an object we assume that you want to transition unless explicitly said otherwise.
+          if (cond.transition == null || cond.transition === true) {
             return t.state;
           }
         }
@@ -375,6 +372,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
     this.currentState = {
       previousState: this.currentState.state,
+      event: eventType ? { type: eventType, data: eventData } : undefined,
       state: nextState,
       input,
     };

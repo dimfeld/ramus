@@ -19,7 +19,7 @@ export interface NodeInput<CONTEXT extends object, ROOTINPUT, INPUTS> {
    *
    * The event will be recorded on the active Span unless `spanEvent` is false.
    */
-  event: (type: string, data: unknown, spanEvent?: boolean) => void;
+  notify: (type: string, data: unknown, spanEvent?: boolean) => void;
 
   /** Return if this node has been cancelled due to failures elsewhere in the DAG. */
   isCancelled: () => boolean;

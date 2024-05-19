@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
@@ -233,7 +232,7 @@ export class DagNodeRunner<
     }
 
     // This doesn't actually enforce that the `type` and `data` match but it's good enough for the few calls here.
-    const sendEvent = (type: string, data: unknown) => {
+    const notify = (type: string, data: unknown) => {
       this.eventCb({
         type,
         data,
@@ -260,7 +259,7 @@ export class DagNodeRunner<
 
         this.setState('running');
         try {
-          sendEvent('dag:node_start', { input: this.inputs });
+          notify('dag:node_start', { input: this.inputs });
           if (this.config.parents) {
             span.setAttribute('dag.node.parents', this.config.parents.join(', '));
           }
@@ -286,12 +285,12 @@ export class DagNodeRunner<
               context: this.context,
               span,
               chronicleOptions,
-              event: (type, data, spanEvent = true) => {
+              notify: (type, data, spanEvent = true) => {
                 if (spanEvent) {
                   addSpanEvent(span, type, data);
                 }
 
-                sendEvent(type, data);
+                notify(type, data);
               },
               isCancelled: () => this.state === 'cancelled',
               exitIfCancelled: () => {
@@ -310,7 +309,7 @@ export class DagNodeRunner<
           );
 
           if (this.state !== 'cancelled') {
-            sendEvent('dag:node_finish', { output });
+            notify('dag:node_finish', { output });
             this.setState('finished');
             this.result = { type: 'success', output };
             this.emit('finish', { name: this.name, output });
@@ -322,7 +321,7 @@ export class DagNodeRunner<
             let err = e as Error;
             this.setState('error');
             this.result = { type: 'error', error: err };
-            sendEvent('dag:node_error', { error: err });
+            notify('dag:node_error', { error: err });
             this.emit('orchard:error', err);
 
             span.recordException(err);
