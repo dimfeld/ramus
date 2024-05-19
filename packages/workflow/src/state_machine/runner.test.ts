@@ -264,6 +264,7 @@ describe('events', () => {
   test.todo('events sent while running get queued up and handled later');
   test.todo('event causes a step');
   test.todo('event does not cause a step');
+  test.todo('queued events');
 });
 
 describe('validation', () => {

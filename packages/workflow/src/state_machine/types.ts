@@ -100,3 +100,11 @@ export type StateMachineTransition<CONTEXT extends object, ROOTINPUT, INPUTS, OU
   /** Trigger this transition if the condition is true */
   condition?: StateMachineTransitionGuard<CONTEXT, ROOTINPUT, INPUTS, OUTPUT, EVENTDATA>;
 };
+
+export interface StateMachineSendEventOptions {
+  type: string;
+  data: unknown;
+  /** If true, queue this event up until a state can handle it. If false or omitted, try to send the event
+   * on the next transition, and drop it if it can't be handled. */
+  queue?: boolean;
+}

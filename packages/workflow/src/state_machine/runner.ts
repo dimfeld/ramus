@@ -3,6 +3,7 @@ import * as opentelemetry from '@opentelemetry/api';
 import {
   StateMachine,
   StateMachineNodeInput,
+  StateMachineSendEventOptions,
   StateMachineStatus,
   TransitionGuardInput,
 } from './types.js';
@@ -60,7 +61,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   semaphores?: Semaphore[];
   parentSpanContext?: opentelemetry.Context;
   stepIndex = 0;
-  eventQueue: { type: string; data: unknown }[] = [];
+  eventQueue: StateMachineSendEventOptions[] = [];
   _finished: Promise<OUTPUT> | undefined;
 
   constructor(options: StateMachineRunnerOptions<CONTEXT, ROOTINPUT>) {
@@ -231,19 +232,39 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           // If some events were queued up while running, then try applying them now.
           let transitioned = false;
           if (this.eventQueue?.length) {
-            let eventQueue = this.eventQueue;
-            this.eventQueue = [];
-            for (let { type, data } of eventQueue) {
-              let t = this.runTransition(type, data);
-              if (t) {
-                transitioned = true;
-                break;
+            let i = 0;
+            while (i < this.eventQueue.length) {
+              let { type, data, queue } = this.eventQueue[i];
+
+              let retainEvent: boolean | undefined;
+
+              if (transitioned) {
+                // We already transitioned, so keep `queue` events and drop others.
+                retainEvent = queue;
+              } else {
+                let t = this.runTransition(type, data);
+                if (t) {
+                  transitioned = true;
+                  // Drop the event since we handled it.
+                  retainEvent = false;
+                } else {
+                  // We did not transition, so keep it if it was a `queue` event AND if we didn't have any event
+                  // handler for it. This will drop the event if there was a handler but it chose not to act
+                  // on it.
+                  retainEvent = queue && !this.transitionsForEvent(type);
+                }
+              }
+
+              if (retainEvent) {
+                i++;
+              } else {
+                this.eventQueue.splice(i, 1);
               }
             }
           }
 
           if (!transitioned) {
-            // None of the queued events triggered a transition, so just do the normal transition logic.
+            // None of the queued events triggered a transition, so try the "always" transition logic if present.
             transitioned = this.runTransition();
           }
 
@@ -305,6 +326,16 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     } else {
       this.setStatus('ready');
     }
+  }
+
+  private transitionsForEvent(eventType?: string) {
+    const transitions = this.config.nodes[this.currentState.state].transition;
+    if (typeof transitions === 'string') {
+      // Unconditional transition, ignores events
+      return eventType ? undefined : transitions;
+    }
+
+    return transitions?.[eventType ?? ''];
   }
 
   /** Figure out which transition to run for an event. */
@@ -390,15 +421,26 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   }
 
   /** Send an event to the state machine. */
-  send(type: string, data: unknown) {
-    if (this.machineStatus === 'running') {
-      this.eventQueue.push({ type, data });
+  send(options: StateMachineSendEventOptions) {
+    if (
+      this.machineStatus === 'running' ||
+      (options.queue && !this.transitionsForEvent(options.type))
+    ) {
+      this.eventQueue.push(options);
     } else {
-      let transitioned = this.runTransition(type, data);
+      let transitioned = this.runTransition(options.type, options.data);
       if (transitioned) {
         this.updatePostTransition();
       }
     }
+  }
+
+  /** Return a list of events that the current state can handle. */
+  availableEvents(): string[] {
+    return Object.keys(this.config.nodes[this.currentState.state].transition ?? {}).filter(
+      // filter out empty string
+      (name) => name
+    );
   }
 }
 

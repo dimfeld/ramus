@@ -47,7 +47,7 @@ export type FrameworkWorkflowEvent =
 /** Any workflow event, covering any event type */
 export type WorkflowEvent = WorkflowEventBase<string, unknown>;
 
-/** Return true if this event is emitted by the framework itself. If false, then this even is from
+/** Return true if this event is emitted by the framework itself. If false, then this event is from
  * one of the nodes. */
 export function isFrameworkEvent(event: WorkflowEvent): event is FrameworkWorkflowEvent {
   return [
