@@ -1,0 +1,31 @@
+{
+  "name": "@ramus/bot",
+  "description": "Platform-agnostic abstraction for chatbots",
+  "module": "dist/index.js",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "package.json",
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc && publint",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "publint": "^0.2.7"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@ramus/workflow": "workspace:*",
+    "lru-cache": "~10.2.2"
+  }
+}

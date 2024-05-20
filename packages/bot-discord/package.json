@@ -1,0 +1,31 @@
+{
+  "name": "@ramus/bot-discord",
+  "description": "Discord adapter for Ramus chatbots",
+  "module": "dist/index.js",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "package.json",
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc && publint",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "publint": "^0.2.7"
+  },
+  "peerDependencies": {
+    "@ramus/bot": "workspace:*",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.2"
+  }
+}
