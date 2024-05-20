@@ -26,6 +26,8 @@
   },
   "dependencies": {
     "@ramus/workflow": "workspace:*",
-    "lru-cache": "~10.2.2"
+    "drizzle-orm": "~0.30.10",
+    "lru-cache": "~10.2.2",
+    "postgres": "~3.4.4"
   }
 }
