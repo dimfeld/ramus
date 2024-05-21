@@ -2,7 +2,10 @@
   "name": "ramus",
   "version": "0.1.0",
   "workspaces": [
-    "packages/*"
+    "packages/bot",
+    "packages/bot-discord",
+    "packages/tools",
+    "packages/workflow"
   ],
   "dependencies": {
     "bufferutil": "^4.0.8",

@@ -1,4 +1,4 @@
-import { pgTable, boolean, index, text, uuid, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, boolean, index, text, uuid, uniqueIndex, timestamp } from 'drizzle-orm/pg-core';
 
 export const channels = pgTable(
   'ramus.discord_channels',
@@ -7,6 +7,8 @@ export const channels = pgTable(
     guild: text('guild').notNull(),
     channel: text('channel').notNull(),
     active: boolean('active').notNull().default(true),
+    started_by: text('started_by').notNull(),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => {
     return {

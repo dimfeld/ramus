@@ -13,13 +13,15 @@ import { eq, and } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
-import { channels } from './db.js';
+import { channels, guildOrganizations } from './db.js';
 
 interface DiscordConversation {
   conversation_id: string;
   guild: string;
   channel: string;
   active: boolean;
+  started_by: string;
+  org: string;
 }
 
 const COMMAND_VERSION = 0;
@@ -74,6 +76,20 @@ export class DiscordBotAdapter implements BotAdapter {
     }
   }
 
+  baseConversationGetQuery() {
+    return this.db
+      .select({
+        conversation_id: channels.conversation_id,
+        guild: channels.guild,
+        channel: channels.channel,
+        started_by: channels.started_by,
+        active: channels.active,
+        org: guildOrganizations.organization,
+      })
+      .from(channels)
+      .innerJoin(guildOrganizations, eq(guildOrganizations.guild, channels.guild));
+  }
+
   async getConversationById(id: string): Promise<DiscordConversation | null> {
     let conversation = this.conversationsById.get(id);
     if (conversation != null) {
@@ -81,7 +97,7 @@ export class DiscordBotAdapter implements BotAdapter {
     }
 
     conversation = (
-      await this.db.select().from(channels).where(eq(channels.conversation_id, id))
+      await this.baseConversationGetQuery().where(eq(channels.conversation_id, id))
     )[0];
     this.populateCache(id, conversation?.channel, conversation);
 
@@ -95,7 +111,7 @@ export class DiscordBotAdapter implements BotAdapter {
     }
 
     let info =
-      (await this.db.select().from(channels).where(eq(channels.channel, channel)))[0] ?? null;
+      (await this.baseConversationGetQuery().where(eq(channels.channel, channel)))[0] ?? null;
 
     this.populateCache(info?.conversation_id, channel, info);
 
@@ -157,12 +173,31 @@ export class DiscordBotAdapter implements BotAdapter {
         channelId = thread.id;
       }
 
+      let org = await this.db
+        .select()
+        .from(guildOrganizations)
+        .where(eq(guildOrganizations.guild, message.guildId!));
+      if (!org[0]) {
+        throw new Error(`No organization found for guild ${message.guildId}`);
+      }
+
       conversation = {
         conversation_id: this.manager.newConversationId(),
-        active: true,
         guild: message.guildId!,
         channel: channelId,
+        started_by: message.author.id,
+        active: true,
+        org: org[0].organization,
       };
+
+      await this.db.insert(channels).values({
+        channel: channelId,
+        conversation_id: conversation.conversation_id,
+        guild: message.guildId!,
+        started_by: message.author.id,
+        started_at: new Date(),
+        active: true,
+      });
 
       this.populateCache(conversation.conversation_id, conversation.channel, conversation);
     }
