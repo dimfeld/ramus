@@ -22,10 +22,10 @@
     "publint": "^0.2.7"
   },
   "peerDependencies": {
-    "@ramus/bot": "workspace:*",
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@ramus/bot": "workspace:*",
     "discord.js": "^14.15.2",
     "drizzle-orm": "~0.30.10",
     "lru-cache": "~10.2.2"
