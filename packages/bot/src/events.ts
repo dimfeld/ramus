@@ -47,7 +47,7 @@ export interface OutgoingChatEvent extends BaseOutgoingEvent {
   type: 'chat';
   message: string;
   /** The ID of the message to update, if any. The system will only ever ask to update recent messages. */
-  message_id: string;
+  message_id?: string;
   /** If this is a new message, */
   operation?: 'create' | 'replace' | 'append';
 }
