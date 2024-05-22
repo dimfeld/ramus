@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc && publint",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch --preserveWatchOutput"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -28,6 +28,7 @@
     "@ramus/workflow": "workspace:*",
     "drizzle-orm": "~0.30.10",
     "lru-cache": "~10.2.2",
-    "postgres": "~3.4.4"
+    "postgres": "~3.4.4",
+    "uuidv7": "^1.0.0"
   }
 }
