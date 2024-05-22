@@ -13,23 +13,22 @@ import {
   BotAdapter,
   OutgoingEvent,
   OutgoingChatEvent,
-  IncomingEventCallback,
   IncomingEvent,
   postgresClient,
   conversations,
 } from '@ramus/bot';
 import { LRUCache } from 'lru-cache';
 import { eq, and } from 'drizzle-orm';
-import { randomUUID } from 'crypto';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
-import { kvConfigs } from '@ramus/bot';
-import { channels, guildOrganizations, guildUsers } from './db.js';
+import { channels, guildOrganizations } from './db.js';
 import { kvGet } from '@ramus/bot';
 import { kvSet } from '@ramus/bot';
-import { PgTransaction } from 'drizzle-orm/pg-core';
+import { createThreadedConverationHandler } from './threaded_conversation.js';
 
-interface DiscordConversation {
+export * from './threaded_conversation.js';
+
+export interface DiscordConversation {
   conversation_id: string;
   guild: string;
   channel: string;
@@ -138,7 +137,7 @@ export class DiscordBotAdapter implements BotAdapter {
 
     if (currentCommandVersion < COMMAND_VERSION) {
       const rest = new REST().setToken(token);
-      // TODO take commands with the constructor
+      // TODO command definitions
       let commands = {};
       await rest.put(Routes.applicationCommands(clientId), {
         body: {
@@ -159,122 +158,10 @@ export class DiscordBotAdapter implements BotAdapter {
       // lookup interaction.commandName in the commands map and run it
     });
 
+    // TODO allow passing in the message handler
     // TODO run this in a root span and handle errors
-    this.client.on('messageCreate', (message) => this.handleMessage(message));
-
-    // TODO check for command version, update commands if needed
-  }
-
-  async handleMessage(message: Message) {
-    let conversation = await this.getConversationForChannel(message.channelId);
-    const mentionedBot = this.client.user && message.mentions.users.has(this.client.user.id);
-
-    const { guildId } = message;
-    if (!guildId) {
-      // Ignore DMs for now
-      return;
-    }
-
-    // TODO figure out how to make all this logic platform-independent but that can come later.
-    if (conversation?.active === false) {
-      // This conversation is inactive, so ignore it unless the bot was specifically mentioned.
-      if (mentionedBot) {
-        // Mentioning the bot in an inactive conversation sets it active again.
-        await this.manager.setConversationActive(this.db, conversation.conversation_id, true);
-
-        this.receiveEvent({
-          conversation_id: conversation.conversation_id,
-          id: message.id,
-          type: 'reopen',
-        });
-
-        conversation.active = true;
-      } else {
-        // Bot not mentioned, so ignore it.
-        return;
-      }
-    }
-
-    let channelId = message.channelId;
-    if (!conversation) {
-      if (mentionedBot && message.channel.type === ChannelType.GuildText) {
-        // TODO better logic for a thread name. Move this to the global platform and make it use some kind of summary
-        const threadName = `${message.author.displayName}: ${message.content.slice(0, 50)}`;
-        const thread = await message.channel.threads.create({
-          name: threadName,
-        });
-        channelId = thread.id;
-      }
-
-      let [org, user] = await Promise.all([
-        this.db
-          .select({ organization_id: guildOrganizations.organization_id })
-          .from(guildOrganizations)
-          .where(eq(guildOrganizations.discord_guild_id, message.guildId!)),
-        this.db
-          .select({ user_id: guildUsers.user_id })
-          .from(guildUsers)
-          .where(
-            and(
-              eq(guildUsers.discord_user_id, message.author.id),
-              eq(guildUsers.discord_guild_id, guildId)
-            )
-          ),
-      ]);
-
-      if (!org[0]) {
-        // TODO return an ephemeral message about how the org is not set up
-        throw new Error(`No organization found for guild ${message.guildId}`);
-      }
-
-      if (!user[0]) {
-        // TODO return an ephemeral message about how the user is not set up with instructions on
-        // how to authenticate using a slash command
-        throw new Error(
-          `No user found for user ${message.author.displayName} (${message.author.globalName}: ${message.author.id})`
-        );
-      }
-
-      conversation = await this.db.transaction(async (tx) => {
-        // TODO run this and the next query in a transaction
-        const conversationId = await this.manager.newConversation(
-          tx,
-          this.name,
-          org[0].organization_id,
-          user[0].user_id
-        );
-
-        await tx.insert(channels).values({
-          channel: channelId,
-          conversation_id: conversationId,
-          guild: guildId,
-          started_by: message.author.id,
-          started_at: new Date(),
-        });
-
-        let conversation = {
-          conversation_id: conversationId,
-          guild: message.guildId!,
-          channel: channelId,
-          started_by: message.author.id,
-          active: true,
-          org: org[0].organization_id,
-        };
-
-        this.populateCache(conversation.conversation_id, conversation.channel, conversation);
-        return conversation;
-      });
-    }
-
-    // TODO Maybe want some logic to make sure that the person typing is the thread originator. Not important right now
-    // though.
-
-    this.receiveEvent({
-      conversation_id: conversation.conversation_id,
-      id: message.id,
-      message: message.content,
-      type: 'chat',
-    });
+    const handler = createThreadedConverationHandler();
+    this.client.on('messageCreate', (message) => handler(this, message));
   }
 
   async sendChat(event: OutgoingChatEvent): Promise<void> {
