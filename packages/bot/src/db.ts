@@ -1,27 +1,45 @@
 import postgres from 'postgres';
-import { pgTable, text, jsonb, uuid, timestamp, boolean } from 'drizzle-orm/pg-core';
+import { text, jsonb, uuid, timestamp, boolean, pgSchema } from 'drizzle-orm/pg-core';
 import { drizzle, PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { runMigrations, Migrations } from './migrations.js';
+import { migrations as mainMigrations } from './migration_fn.js';
 import { eq, sql } from 'drizzle-orm';
 
+let pool: postgres.Sql | undefined;
 export let _db: PostgresJsDatabase;
 
-export async function initDb(connectionString: string, migrations: Migrations[]) {
+export interface RamusBotDbOptions {
+  /** The connection string for the database. */
+  connectionString: string;
+  /** A Drizzle client for the database. This should usually be provided so that the bot can share the
+   * connection pool with the rest of the application. If omitted, one will be created using `connectionString`. */
+  db?: PostgresJsDatabase;
+  /** Migrations to run when connecting. */
+  migrations: Migrations[];
+}
+
+export async function initDb({ connectionString, db, migrations }: RamusBotDbOptions) {
   if (_db) {
-    throw new Error(`Tried to initiialize database twice`);
+    throw new Error(`Tried to initialize database twice`);
   }
 
-  connectionString = connectionString ?? process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error(`No database connection string provided`);
+  if (!migrations.some((m) => m.key === 'main')) {
+    migrations.unshift(mainMigrations);
   }
 
-  const migrationClient = postgres(connectionString, { max: 1 });
+  let migrationConn = postgres(connectionString, { max: 1 });
+  await runMigrations(migrationConn, migrations);
 
-  await runMigrations(migrationClient, migrations);
+  if (db) {
+    _db = db;
+  } else {
+    pool = postgres(connectionString);
+    _db = drizzle(pool);
+  }
+}
 
-  const client = postgres(connectionString);
-  _db = drizzle(client);
+export function shutdownDb() {
+  pool?.end();
 }
 
 export function postgresClient() {
@@ -32,7 +50,9 @@ export function postgresClient() {
   return _db;
 }
 
-export const conversations = pgTable('ramus.conversations', {
+export const ramusSchema = pgSchema('ramus');
+
+export const conversations = ramusSchema.table('ramus.conversations', {
   conversation_id: uuid('conversation_id').primaryKey(),
   organization: uuid('organization').notNull(),
   platform: text('platform').notNull(),
@@ -41,19 +61,19 @@ export const conversations = pgTable('ramus.conversations', {
   started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const kvConfigs = pgTable('ramus.vars', {
+export const kvConfigs = ramusSchema.table('ramus.vars', {
   key: text('key').notNull().primaryKey(),
   value: jsonb('value').notNull(),
 });
 
-export async function kvGet<T>(key: string): Promise<T | undefined> {
-  const data = await postgresClient().select().from(kvConfigs).where(eq(kvConfigs.key, key));
+export async function kvGet<T>(tx: PostgresJsDatabase, key: string): Promise<T | undefined> {
+  const data = await tx.select().from(kvConfigs).where(eq(kvConfigs.key, key));
   return data[0]?.value as T;
 }
 
-export async function kvSet<T>(key: string, value: T) {
-  await postgresClient()
+export async function kvSet<T>(tx: PostgresJsDatabase, key: string, value: T) {
+  await tx
     .insert(kvConfigs)
     .values({ key, value })
-    .onConflictDoUpdate({ target: [kvConfigs.key], set: { value: sql`excluded.value` } });
+    .onConflictDoUpdate({ target: [kvConfigs.key], set: { value: sql`EXCLUDED.value` } });
 }

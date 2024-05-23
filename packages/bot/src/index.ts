@@ -10,9 +10,11 @@ export * from './db.js';
 export * from './events.js';
 export * from './migrations.js';
 
+import { migrations } from './migration_fn.js';
+
 export interface BotAdapter {
   name: string;
-  sendChat(event: OutgoingChatEvent): Promise<void>;
+  sendChat(event: OutgoingChatEvent): any;
 }
 
 export class BotManager extends EventEmitter<{ event: [IncomingEvent] }> {
@@ -25,6 +27,10 @@ export class BotManager extends EventEmitter<{ event: [IncomingEvent] }> {
     this.conversationPlatform = new LRUCache({
       max: 1000,
     });
+  }
+
+  migrations() {
+    return migrations;
   }
 
   /** Receive an event from one of the chat platform adapters. */
@@ -55,6 +61,7 @@ export class BotManager extends EventEmitter<{ event: [IncomingEvent] }> {
 
   /** Send an event to one of the chat platform adapters. */
   async sendEvent(event: OutgoingEvent) {
+    // TODO do this in a span
     let platform = this.conversationPlatform.get(event.conversation_id);
     if (!platform) {
       platform = await this.lookupConversationPlatform(event.conversation_id);

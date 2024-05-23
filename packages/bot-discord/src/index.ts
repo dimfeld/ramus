@@ -26,7 +26,10 @@ import { kvGet } from '@ramus/bot';
 import { kvSet } from '@ramus/bot';
 import { createThreadedConverationHandler } from './threaded_conversation.js';
 
+export * from './migrations.js';
 export * from './threaded_conversation.js';
+
+import { migrations } from './migrations.js';
 
 export interface DiscordConversation {
   conversation_id: string;
@@ -70,6 +73,10 @@ export class DiscordBotAdapter implements BotAdapter {
     this.conversationsByChannel = new LRUCache({
       max: 1000,
     });
+  }
+
+  migrations() {
+    return migrations;
   }
 
   receiveEvent(event: IncomingEvent) {
@@ -133,7 +140,7 @@ export class DiscordBotAdapter implements BotAdapter {
   }
 
   async connect(clientId: string, token: string) {
-    const currentCommandVersion: number = (await kvGet('discord:command_version')) ?? 0;
+    const currentCommandVersion: number = (await kvGet(this.db, 'discord:command_version')) ?? 0;
 
     if (currentCommandVersion < COMMAND_VERSION) {
       const rest = new REST().setToken(token);
@@ -145,7 +152,7 @@ export class DiscordBotAdapter implements BotAdapter {
         },
       });
 
-      await kvSet('discord:command_version', COMMAND_VERSION);
+      await kvSet(this.db, 'discord:command_version', COMMAND_VERSION);
     }
 
     await this.client.login(token);

@@ -10,9 +10,10 @@ import {
   primaryKey,
   foreignKey,
 } from 'drizzle-orm/pg-core';
+import { ramusSchema } from '@ramus/bot';
 
-export const channels = pgTable(
-  'ramus.discord_channels',
+export const channels = ramusSchema.table(
+  'discord_channels',
   {
     conversation_id: uuid('conversation_id').primaryKey(),
     guild: text('guild').notNull(),
@@ -28,8 +29,8 @@ export const channels = pgTable(
   }
 );
 
-export const guildOrganizations = pgTable(
-  'ramus.discord_org_mapping',
+export const guildOrganizations = ramusSchema.table(
+  'discord_org_mapping',
   {
     discord_guild_id: text('discord_guild_id').primaryKey(),
     organization_id: uuid('organization_id').notNull(),
@@ -41,8 +42,8 @@ export const guildOrganizations = pgTable(
   }
 );
 
-export const guildUsers = pgTable(
-  'ramus.discord_user_mapping',
+export const guildUsers = ramusSchema.table(
+  'discord_user_mapping',
   {
     discord_user_id: text('discord_user_id').notNull(),
     discord_guild_id: text('discord_guild_id')
@@ -51,12 +52,7 @@ export const guildUsers = pgTable(
         onDelete: 'cascade',
         onUpdate: 'cascade',
       }),
-    organization_id: uuid('organization_id')
-      .notNull()
-      .references(() => guildOrganizations.organization_id, {
-        onDelete: 'cascade',
-        onUpdate: 'cascade',
-      }),
+    organization_id: uuid('organization_id').notNull(),
     user_id: uuid('user_id').notNull(),
   },
   (table) => {
