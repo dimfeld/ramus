@@ -4,7 +4,7 @@ export interface Migrations {
   key: string;
   /** Absolute path to queries, in order of application. The migration system will filter this to the
    * list of queries that need to be run. */
-  fn: Array<() => { name: string; query: string }>;
+  queries: Array<() => Promise<{ name: string; query: string }> | { name: string; query: string }>;
 }
 
 /** Run migrations. Migrations for adapters should usually be last. */
@@ -22,7 +22,7 @@ export async function runMigrations(sql: Sql, migrations: Migrations[]) {
       (rows) => Object.fromEntries((rows as any[]).map((row) => [row.source, row.needed]))
     );
 
-  const neededSources = migrations.filter((m) => nextVersion[m.key] ?? 0 < m.fn.length);
+  const neededSources = migrations.filter((m) => nextVersion[m.key] ?? 0 < m.queries.length);
   if (!neededSources.length) {
     console.log(`Migrations are up to date`);
     return;
@@ -35,9 +35,9 @@ export async function runMigrations(sql: Sql, migrations: Migrations[]) {
   });
 }
 
-export async function runMigrationSet(sql: Sql, needed: number, migrations: Migrations) {
-  for (let index = needed; index < migrations.fn.length; index++) {
-    const { name, query } = migrations.fn[index - 1]();
+async function runMigrationSet(sql: Sql, needed: number, migrations: Migrations) {
+  for (let index = needed; index < migrations.queries.length; index++) {
+    const { name, query } = await migrations.queries[index - 1]();
     console.log(`Running migration ${migrations.key}(${index}): ${name}`);
     await sql.unsafe(query).simple();
     await sql`INSERT INTO ramus.__migrations (source, index)

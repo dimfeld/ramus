@@ -75,7 +75,7 @@ export class DiscordBotAdapter implements BotAdapter {
     });
   }
 
-  migrations() {
+  static migrations() {
     return migrations;
   }
 

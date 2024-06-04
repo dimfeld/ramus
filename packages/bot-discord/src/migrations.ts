@@ -2,7 +2,7 @@ import { Migrations } from '@ramus/bot';
 
 export const migrations: Migrations = {
   key: 'discord',
-  fn: [
+  queries: [
     () => ({
       name: 'Initial setup',
       query: `

@@ -2,7 +2,7 @@ import { Migrations } from './migrations.js';
 
 export const migrations: Migrations = {
   key: 'main',
-  fn: [
+  queries: [
     () => ({
       name: 'Initial migration',
       query: `

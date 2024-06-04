@@ -28,7 +28,7 @@ export class BotManager extends EventEmitter<{ event: [IncomingEvent] }> {
     });
   }
 
-  migrations() {
+  static migrations() {
     return migrations;
   }
 
