@@ -1,10 +1,9 @@
 import { and, eq } from 'drizzle-orm';
 import { EventEmitter } from 'events';
 import { LRUCache } from 'lru-cache';
-import { conversations, postgresClient } from './db.js';
+import { Database, conversations, postgresClient } from './db.js';
 import { IncomingEvent, OutgoingChatEvent, OutgoingEvent } from './events.js';
 import { uuidv7 } from 'uuidv7';
-import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
 export * from './db.js';
 export * from './events.js';
@@ -101,12 +100,7 @@ export class BotManager extends EventEmitter<{ event: [IncomingEvent] }> {
     this.adapters[adapter.name] = adapter;
   }
 
-  async newConversation(
-    tx: PostgresJsDatabase,
-    platform: string,
-    organization: string,
-    user: string
-  ) {
+  async newConversation(tx: Database, platform: string, organization: string, user: string) {
     const id = uuidv7();
     this.conversationPlatform.set(id, platform);
 
@@ -121,7 +115,7 @@ export class BotManager extends EventEmitter<{ event: [IncomingEvent] }> {
     return id;
   }
 
-  async setConversationActive(tx: PostgresJsDatabase, conversationId: string, active: boolean) {
+  async setConversationActive(tx: Database, conversationId: string, active: boolean) {
     await tx
       .update(conversations)
       .set({ active })

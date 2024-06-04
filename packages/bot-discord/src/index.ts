@@ -16,10 +16,10 @@ import {
   IncomingEvent,
   postgresClient,
   conversations,
+  Database,
 } from '@ramus/bot';
 import { LRUCache } from 'lru-cache';
 import { eq, and } from 'drizzle-orm';
-import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
 import { channels, guildOrganizations } from './db.js';
 import { kvGet } from '@ramus/bot';
@@ -51,7 +51,7 @@ export class DiscordBotAdapter implements BotAdapter {
   conversationsById: LRUCache<string, DiscordConversation | false>;
   conversationsByChannel: LRUCache<string, DiscordConversation | false>;
 
-  db: PostgresJsDatabase;
+  db: Database;
 
   constructor(manager: BotManager) {
     this.db = postgresClient();

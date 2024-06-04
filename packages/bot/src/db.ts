@@ -1,19 +1,35 @@
 import postgres from 'postgres';
-import { text, jsonb, uuid, timestamp, boolean, pgSchema } from 'drizzle-orm/pg-core';
-import { drizzle, PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import {
+  text,
+  jsonb,
+  uuid,
+  timestamp,
+  boolean,
+  pgSchema,
+  PgDatabase,
+  QueryResultHKT,
+} from 'drizzle-orm/pg-core';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { runMigrations, Migrations } from './migrations.js';
 import { migrations as mainMigrations } from './migration_fn.js';
-import { eq, sql } from 'drizzle-orm';
+import { ExtractTablesWithRelations, TablesRelationalConfig, eq, sql } from 'drizzle-orm';
+
+/** A driver-agnostic database type */
+export type Database<
+  TQueryResult extends QueryResultHKT = QueryResultHKT,
+  TFullSchema extends Record<string, unknown> = Record<string, never>,
+  TSchema extends TablesRelationalConfig = ExtractTablesWithRelations<TFullSchema>,
+> = PgDatabase<TQueryResult, TFullSchema, TSchema>;
 
 let pool: postgres.Sql | undefined;
-export let _db: PostgresJsDatabase;
+export let _db: Database;
 
 export interface RamusBotDbOptions {
   /** The connection string for the database. */
   connectionString: string;
   /** A Drizzle client for the database. This should usually be provided so that the bot can share the
    * connection pool with the rest of the application. If omitted, one will be created using `connectionString`. */
-  db?: PostgresJsDatabase;
+  db?: Database;
   /** Migrations to run when connecting. */
   migrations: Migrations[];
 }
@@ -66,12 +82,12 @@ export const kvConfigs = ramusSchema.table('ramus.vars', {
   value: jsonb('value').notNull(),
 });
 
-export async function kvGet<T>(tx: PostgresJsDatabase, key: string): Promise<T | undefined> {
+export async function kvGet<T>(tx: Database, key: string): Promise<T | undefined> {
   const data = await tx.select().from(kvConfigs).where(eq(kvConfigs.key, key));
   return data[0]?.value as T;
 }
 
-export async function kvSet<T>(tx: PostgresJsDatabase, key: string, value: T) {
+export async function kvSet<T>(tx: Database, key: string, value: T) {
   await tx
     .insert(kvConfigs)
     .values({ key, value })
