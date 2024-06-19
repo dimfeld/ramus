@@ -213,6 +213,17 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             semRelease = await acquireSemaphores(this.semaphores, config.semaphoreKey);
           }
           this.setStatus('running');
+          this.eventCb({
+            type: 'state_machine:node_start',
+            sourceId: this.id,
+            source: this.name,
+            step: this.stepIndex,
+            sourceNode: this.currentState.state,
+            data: {
+              input: this.currentState.input,
+              event: this.currentState.event,
+            },
+          });
 
           let nodeInput: StateMachineNodeInput<CONTEXT, ROOTINPUT, any> = {
             context: this.context,
@@ -235,6 +246,17 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             this.currentState.output = await config.run(nodeInput);
             span.setAttribute('output', toSpanAttributeValue(this.currentState.output as object));
           }
+
+          this.eventCb({
+            type: 'state_machine:node_finish',
+            sourceId: this.id,
+            source: this.name,
+            step: this.stepIndex,
+            sourceNode: this.currentState.state,
+            data: {
+              output: this.currentState.output,
+            },
+          });
 
           // If some events were queued up while running, then try applying them now.
           let transitioned = false;
@@ -317,6 +339,18 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     }
 
     this.machineStatus = newStatus;
+
+    this.eventCb({
+      type: 'state_machine:status',
+      sourceId: this.id,
+      source: this.name,
+      step: this.stepIndex,
+      sourceNode: this.currentState.state,
+      data: {
+        status: newStatus,
+      },
+    });
+
     this.emit('state', {
       machineState: this.machineStatus,
       state: this.currentState.state,

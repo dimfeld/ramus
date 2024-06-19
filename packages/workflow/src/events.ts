@@ -1,5 +1,6 @@
 import type { ChronicleRequestMetadata } from 'chronicle-proxy';
 import { AnyInputs, DagNodeState } from './dag/types.js';
+import { StateMachineStatus } from './state_machine/types.js';
 
 /** The general structure of an event emitted by the framework. */
 export interface WorkflowEventBase<TYPE extends string, DATA> {
@@ -22,6 +23,26 @@ export type DagNodeErrorEvent = WorkflowEventBase<'dag:node_error', { error: Err
 export type DagNodeStateEvent = WorkflowEventBase<'dag:node_state', { state: DagNodeState }>;
 
 export type StateMachineStartEvent = WorkflowEventBase<'state_machine:start', {}>;
+export type StateMachineStatusEvent = WorkflowEventBase<
+  'state_machine:status',
+  { status: StateMachineStatus }
+>;
+export type StateMachineNodeStartEvent = WorkflowEventBase<
+  'state_machine:node_start',
+  {
+    input: unknown;
+    event?: {
+      type: string;
+      data: unknown;
+    };
+  }
+>;
+export type StateMachineNodeFinishEvent = WorkflowEventBase<
+  'state_machine:node_finish',
+  {
+    output: unknown;
+  }
+>;
 export type StateMachineTransitionEvent = WorkflowEventBase<
   'state_machine:transition',
   {
@@ -45,6 +66,9 @@ export type FrameworkWorkflowEvent =
   | DagNodeErrorEvent
   | DagNodeStateEvent
   | StateMachineStartEvent
+  | StateMachineStatusEvent
+  | StateMachineNodeStartEvent
+  | StateMachineNodeFinishEvent
   | StateMachineTransitionEvent;
 
 /** Any workflow event, covering any event type */
@@ -62,7 +86,10 @@ export function isFrameworkEvent(event: WorkflowEvent): event is FrameworkWorkfl
     'dag:node_error',
     'dag:node_state',
     'state_machine:start',
+    'state_machine:status',
     'state_machine:transition',
+    'state_machine:node_start',
+    'state_machine:node_finish',
   ].includes(event.type);
 }
 
