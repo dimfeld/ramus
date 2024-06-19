@@ -1,6 +1,5 @@
-import { EventEmitter } from 'events';
 import { AnyInputs, Dag, DagNode } from './types.js';
-import { DagNodeRunner } from './node_runner.js';
+import { DagNodeRunner, StepAllocator } from './node_runner.js';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
 import type { NodeResultCache } from '../cache.js';
@@ -48,6 +47,7 @@ interface NamedDagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInpu
 }
 
 export interface BuildRunnerOptions<CONTEXT extends object, ROOTINPUT> {
+  dagId: string;
   context?: CONTEXT;
   input: ROOTINPUT;
   chronicle?: ChronicleClientOptions;
@@ -83,14 +83,18 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     eventCb,
     autorun,
     semaphores,
+    dagId,
   }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
     let nodes = new Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>>();
 
     context = context ?? this.config.context();
 
+    let stepAllocator = new StepAllocator();
+
     for (let node of this.namedNodes) {
       const runner = new DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>({
         name: node.name,
+        dagId,
         dagName: this.config.name,
         config: node,
         context,
@@ -100,6 +104,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
         cache,
         autorun,
         semaphores,
+        stepAllocator,
       });
       nodes.set(node.name, runner);
     }
@@ -114,6 +119,8 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     const outputNode = new DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>({
       name: '__output',
       dagName: this.config.name,
+      dagId,
+      stepAllocator,
       config: {
         parents: this.info.leafNodes,
         tolerateParentErrors: true,

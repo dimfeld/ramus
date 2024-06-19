@@ -31,6 +31,7 @@
   "dependencies": {
     "@opentelemetry/api": "^1.8.0",
     "chronicle-proxy": "file:../../../chronicle/js-client",
-    "json-stable-stringify": "^1.1.1"
+    "json-stable-stringify": "^1.1.1",
+    "uuidv7": "^1.0.0"
   }
 }

@@ -1,5 +1,12 @@
-import { EventEmitter } from 'events';
 import * as opentelemetry from '@opentelemetry/api';
+import { ChronicleClientOptions } from 'chronicle-proxy';
+import { EventEmitter } from 'events';
+import { uuidv7 } from 'uuidv7';
+import { CancelledError } from '../errors.js';
+import { WorkflowEventCallback } from '../events.js';
+import { Runnable, RunnableEvents } from '../runnable.js';
+import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js';
+import { addSpanEvent, runInSpan, runInSpanWithParent, toSpanAttributeValue } from '../tracing.js';
 import {
   StateMachine,
   StateMachineNodeInput,
@@ -7,17 +14,13 @@ import {
   StateMachineStatus,
   TransitionGuardInput,
 } from './types.js';
-import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js';
-import { ChronicleClientOptions } from 'chronicle-proxy';
-import { WorkflowEventCallback } from '../events.js';
-import { addSpanEvent, runInSpan, runInSpanWithParent, toSpanAttributeValue } from '../tracing.js';
-import { Runnable, RunnableEvents } from '../runnable.js';
-import { CancelledError } from '../errors.js';
 
 export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   config: StateMachine<CONTEXT, ROOTINPUT>;
   /** Override the name for this instance of the state machine. */
   name?: string;
+  // A UUID for the instance of the state machine. This will be autogenrated as a UUIDv7 if not provided.
+  id?: string;
   /** Start from a different initial state than the config indicates. */
   initial?: string;
   /** Use a different context than the default. */
@@ -52,6 +55,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     output?: unknown;
   };
 
+  id: string;
   name: string;
   rootInput: ROOTINPUT;
   context: CONTEXT;
@@ -74,6 +78,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     this.semaphores = options.semaphores;
     this.eventCb = options.eventCb ?? (() => {});
     this.name = options.name ? `${options.name}: ${options.config.name}` : options.config.name;
+    this.id = options.id || uuidv7();
 
     const initial = options.initial ?? options.config.initial;
     if (!this.config.nodes[initial]) {
@@ -191,7 +196,9 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             data,
             meta: chronicleOptions.defaults.metadata,
             source: this.name,
+            sourceId: this.id,
             sourceNode: this.currentState.state,
+            step: this.stepIndex,
           });
         };
 
@@ -397,7 +404,9 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         eventData: eventData,
         final: nextNode.final,
       },
+      sourceId: this.id,
       source: this.name,
+      step: this.stepIndex,
       sourceNode: this.currentState.state,
     });
 

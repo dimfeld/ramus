@@ -21,6 +21,13 @@ export interface RunnerErrorResult {
 
 export type RunnerResult<DATA> = RunnerSuccessResult<DATA> | RunnerErrorResult;
 
+export class StepAllocator {
+  count = 0;
+  next() {
+    return this.count++;
+  }
+}
+
 export interface DagNodeRunnerOptions<
   CONTEXT extends object,
   ROOTINPUT,
@@ -29,6 +36,8 @@ export interface DagNodeRunnerOptions<
 > {
   name: string;
   dagName: string;
+  dagId: string;
+  stepAllocator: StepAllocator;
   config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   /** External input passed when running the DAG */
@@ -54,6 +63,7 @@ export class DagNodeRunner<
 }> {
   name: string;
   dagName: string;
+  dagId: string;
   config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   state: DagNodeState;
@@ -64,6 +74,8 @@ export class DagNodeRunner<
   semaphores?: Semaphore[];
   autorun: () => boolean;
   eventCb: WorkflowEventCallback;
+  step: number | undefined;
+  stepAllocator: StepAllocator;
   /** A promise which resolves when the node finishes or rejects on an error. */
   _finished: Promise<{ name: string; output: OUTPUT }> | undefined;
 
@@ -74,6 +86,7 @@ export class DagNodeRunner<
   constructor({
     name,
     dagName,
+    dagId,
     config,
     context,
     rootInput,
@@ -82,9 +95,11 @@ export class DagNodeRunner<
     eventCb,
     autorun,
     semaphores,
+    stepAllocator,
   }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
+    this.dagId = dagId;
     this.dagName = dagName;
     this.config = config;
     this.rootInput = rootInput;
@@ -97,6 +112,7 @@ export class DagNodeRunner<
     this.semaphores = semaphores;
     this.waiting = new Set();
     this.inputs = {};
+    this.stepAllocator = stepAllocator;
   }
 
   get finished() {
@@ -118,12 +134,16 @@ export class DagNodeRunner<
       return;
     }
 
+    this.getStepNumber();
+
     this.state = state;
     this.eventCb({
       type: 'dag:node_state',
       data: { state },
+      sourceId: this.dagId,
       source: this.dagName,
       sourceNode: this.name,
+      step: this.step!,
       meta: this.chronicleOptions?.defaults?.metadata,
     });
   }
@@ -196,6 +216,14 @@ export class DagNodeRunner<
     return this.waiting.size === 0 && this.stateReadyToRun();
   }
 
+  getStepNumber() {
+    if (typeof this.step === 'number') {
+      return;
+    }
+
+    this.step = this.stepAllocator.next();
+  }
+
   async run(triggeredFromParentFinished = false): Promise<boolean> {
     const ready = this.readyToRun();
     if (triggeredFromParentFinished) {
@@ -214,6 +242,8 @@ export class DagNodeRunner<
       if (!ready && this.state !== 'error') {
         return false;
       }
+
+      this.getStepNumber();
     }
 
     let step = `${this.dagName}:${this.name}`;
@@ -236,7 +266,9 @@ export class DagNodeRunner<
       this.eventCb({
         type,
         data,
+        sourceId: this.dagId,
         source: this.name,
+        step: this.step!,
         sourceNode: this.dagName,
         meta: chronicleOptions?.defaults?.metadata,
       });

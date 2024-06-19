@@ -6,7 +6,10 @@ export interface WorkflowEventBase<TYPE extends string, DATA> {
   type: TYPE;
   data: DATA;
   source: string;
+  // A UUIDv7 for the source workflow
+  sourceId: string;
   sourceNode: string;
+  step?: number;
   meta?: ChronicleRequestMetadata;
 }
 
