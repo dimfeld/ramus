@@ -1,6 +1,13 @@
 import { Span } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 
+export interface NotifyArgs<TYPE extends string = string, DATA = unknown> {
+  type: TYPE;
+  data?: DATA;
+  start_time?: Date;
+  end_time?: Date;
+}
+
 export interface NodeInput<CONTEXT extends object, ROOTINPUT, INPUTS> {
   /** The context passed to the DAG by whatever started it. */
   context: CONTEXT;
@@ -19,7 +26,7 @@ export interface NodeInput<CONTEXT extends object, ROOTINPUT, INPUTS> {
    *
    * The event will be recorded on the active Span unless `spanEvent` is false.
    */
-  notify: (type: string, data: unknown, spanEvent?: boolean) => void;
+  notify: (event: NotifyArgs, spanEvent?: boolean) => void;
 
   /** Return if this node has been cancelled due to failures elsewhere in the DAG. */
   isCancelled: () => boolean;

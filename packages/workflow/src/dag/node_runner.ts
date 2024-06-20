@@ -8,6 +8,7 @@ import { WorkflowEventCallback } from '../events.js';
 import { calculateCacheKey, type NodeResultCache } from '../cache.js';
 import { Semaphore, acquireSemaphores } from '../semaphore.js';
 import { CancelledError } from '../errors.js';
+import { NotifyArgs } from '../types.js';
 
 export interface RunnerSuccessResult<T> {
   type: 'success';
@@ -145,6 +146,7 @@ export class DagNodeRunner<
       sourceNode: this.name,
       step: this.step!,
       meta: this.chronicleOptions?.defaults?.metadata,
+      start_time: new Date(),
     });
   }
 
@@ -262,15 +264,19 @@ export class DagNodeRunner<
     }
 
     // This doesn't actually enforce that the `type` and `data` match but it's good enough for the few calls here.
-    const notify = (type: string, data: unknown) => {
+    const notify = (e: NotifyArgs) => {
+      let start_time = e.start_time || new Date();
+      let end_time = e.end_time || start_time;
       this.eventCb({
-        type,
-        data,
+        type: e.type,
+        data: e.data,
         sourceId: this.dagId,
         source: this.name,
         step: this.step!,
         sourceNode: this.dagName,
         meta: chronicleOptions?.defaults?.metadata,
+        start_time,
+        end_time,
       });
     };
 
@@ -291,7 +297,7 @@ export class DagNodeRunner<
 
         this.setState('running');
         try {
-          notify('dag:node_start', { input: this.inputs });
+          notify({ type: 'dag:node_start', data: { input: this.inputs } });
           if (this.config.parents) {
             span.setAttribute('dag.node.parents', this.config.parents.join(', '));
           }
@@ -317,12 +323,12 @@ export class DagNodeRunner<
               context: this.context,
               span,
               chronicleOptions,
-              notify: (type, data, spanEvent = true) => {
+              notify: (e: NotifyArgs, spanEvent = true) => {
                 if (spanEvent) {
-                  addSpanEvent(span, type, data);
+                  addSpanEvent(span, e);
                 }
 
-                notify(type, data);
+                notify(e);
               },
               isCancelled: () => this.state === 'cancelled',
               exitIfCancelled: () => {
@@ -341,7 +347,7 @@ export class DagNodeRunner<
           );
 
           if (this.state !== 'cancelled') {
-            notify('dag:node_finish', { output });
+            notify({ type: 'dag:node_finish', data: { output } });
             this.setState('finished');
             this.result = { type: 'success', output };
             this.emit('finish', { name: this.name, output });
@@ -353,7 +359,7 @@ export class DagNodeRunner<
             let err = e as Error;
             this.setState('error');
             this.result = { type: 'error', error: err };
-            notify('dag:node_error', { error: err });
+            notify({ type: 'dag:node_error', data: { error: err } });
             this.emit('ramus:error', err);
 
             span.recordException(err);

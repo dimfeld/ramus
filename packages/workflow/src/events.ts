@@ -5,13 +5,15 @@ import { StateMachineStatus } from './state_machine/types.js';
 /** The general structure of an event emitted by the framework. */
 export interface WorkflowEventBase<TYPE extends string, DATA> {
   type: TYPE;
-  data: DATA;
+  data?: DATA;
   source: string;
   // A UUIDv7 for the source workflow
   sourceId: string;
   sourceNode: string;
   step?: number;
   meta?: ChronicleRequestMetadata;
+  start_time?: Date;
+  end_time?: Date;
 }
 
 export type DagStartEvent = WorkflowEventBase<'dag:start', { input: unknown }>;

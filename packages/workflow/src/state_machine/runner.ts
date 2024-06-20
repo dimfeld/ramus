@@ -14,6 +14,7 @@ import {
   StateMachineStatus,
   TransitionGuardInput,
 } from './types.js';
+import { NotifyArgs } from '../types.js';
 
 export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   config: StateMachine<CONTEXT, ROOTINPUT>;
@@ -186,14 +187,13 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           },
         };
 
-        const notify = (type: string, data: unknown, spanEvent = true) => {
+        const notify = (e: NotifyArgs, spanEvent = true) => {
           if (spanEvent) {
-            addSpanEvent(span, type, data);
+            addSpanEvent(span, e);
           }
 
           this.eventCb({
-            type,
-            data,
+            ...e,
             meta: chronicleOptions.defaults.metadata,
             source: this.name,
             sourceId: this.id,
@@ -203,7 +203,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         };
 
         if (this.machineStatus === 'initial') {
-          notify('state_machine:start', {}, false);
+          notify({ type: 'state_machine:start' }, false);
         }
 
         let semRelease: SemaphoreReleaser | undefined;
@@ -317,7 +317,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           }
 
           this.setStatus('error');
-          notify('state_machine:error', { error: e }, false);
+          notify({ type: 'state_machine:error', data: { error: e } }, false);
           this.emit('ramus:error', err);
 
           span.recordException(err);

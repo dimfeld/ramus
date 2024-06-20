@@ -5,6 +5,7 @@ import opentelemetry, {
   SpanOptions,
   SpanStatusCode,
 } from '@opentelemetry/api';
+import { NotifyArgs } from './types.js';
 
 export const tracer = opentelemetry.trace.getTracer('ramus');
 
@@ -38,13 +39,13 @@ export async function runInSpan<T>(
   return runInSpanWithParent(spanName, options, undefined, f);
 }
 
-export function addSpanEvent(span: Span, type: string, data?: unknown) {
+export function addSpanEvent(span: Span, e: NotifyArgs) {
   if (span.isRecording()) {
     const spanData = Object.fromEntries(
-      Object.entries(data ?? {}).map(([k, v]) => [k, toSpanAttributeValue(v)])
+      Object.entries(e.data ?? {}).map(([k, v]) => [k, toSpanAttributeValue(v)])
     );
 
-    span.addEvent(type, spanData);
+    span.addEvent(e.type, spanData);
   }
 }
 
