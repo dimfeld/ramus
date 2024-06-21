@@ -51,8 +51,8 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   autorun: () => boolean;
   input: ROOTINPUT;
   output: OUTPUT | undefined;
-  step: number;
-  parentStep: number | null;
+  step: string;
+  parentStep: string | null;
   /* A promise which resolves when the entire DAG finishes or rejects on an error. */
   _finished: Promise<OUTPUT> | undefined;
 
@@ -80,7 +80,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     this.eventCb = eventCb ?? noop;
     const eventContext = getEventContext();
 
-    this.step = eventContext.stepCounter.next();
+    this.step = uuidv7();
     this.parentStep = eventContext.parentStep;
 
     const { runners, outputNode } = dag.buildRunners({
@@ -119,7 +119,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
   /** Run the entire DAG to completion */
   run(): Promise<void> {
-    return runInSpan(`DAG ${this.name}`, {}, async (span) => {
+    return runInSpan(`DAG ${this.name}`, {}, async () => {
       this.eventCb({
         type: 'dag:start',
         data: { input: this.input, parent_step: this.parentStep },

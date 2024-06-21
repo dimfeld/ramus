@@ -1,14 +1,7 @@
 import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
-import {
-  addSpanEvent,
-  getEventContext,
-  runInSpan,
-  runStep,
-  toSpanAttributeValue,
-  tracer,
-} from '../tracing.js';
+import { addSpanEvent, runInSpan, runStep, toSpanAttributeValue } from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
@@ -16,6 +9,7 @@ import { calculateCacheKey, type NodeResultCache } from '../cache.js';
 import { Semaphore, acquireSemaphores } from '../semaphore.js';
 import { CancelledError } from '../errors.js';
 import { NotifyArgs } from '../types.js';
+import { uuidv7 } from 'uuidv7';
 
 export interface RunnerSuccessResult<T> {
   type: 'success';
@@ -47,7 +41,7 @@ export interface DagNodeRunnerOptions<
   eventCb: WorkflowEventCallback;
   autorun?: () => boolean;
   semaphores?: Semaphore[];
-  parentStep: number;
+  parentStep: string;
 }
 
 export class DagNodeRunner<
@@ -75,8 +69,8 @@ export class DagNodeRunner<
   semaphores?: Semaphore[];
   autorun: () => boolean;
   eventCb: WorkflowEventCallback;
-  parentStep: number | null;
-  step: number | undefined;
+  parentStep: string | null;
+  step: string | undefined;
   /** A promise which resolves when the node finishes or rejects on an error. */
   _finished: Promise<{ name: string; output: OUTPUT }> | undefined;
 
@@ -223,7 +217,7 @@ export class DagNodeRunner<
       return;
     }
 
-    this.step = getEventContext().stepCounter.next();
+    this.step = uuidv7();
   }
 
   async run(triggeredFromParentFinished = false): Promise<boolean> {

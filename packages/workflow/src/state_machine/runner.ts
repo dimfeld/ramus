@@ -9,7 +9,6 @@ import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js
 import {
   addSpanEvent,
   getEventContext,
-  runInSpan,
   runInSpanWithParent,
   runStep,
   toSpanAttributeValue,
@@ -73,8 +72,8 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   semaphores?: Semaphore[];
   parentSpanContext?: opentelemetry.Context;
   stepIndex = 0;
-  eventStep = 0;
-  machineStep: number | null = null;
+  eventStep: string | undefined;
+  machineStep: string | null = null;
   eventQueue: StateMachineSendEventOptions[] = [];
   _finished: Promise<OUTPUT> | undefined;
 
@@ -170,13 +169,13 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
   step() {
     if (this.machineStep === null) {
-      this.machineStep = getEventContext().stepCounter.next();
+      this.machineStep = uuidv7();
     }
 
     if (this.machineStatus === 'initial') {
       this.eventCb({
         type: 'state_machine:start',
-        data: { parent_step: getEventContext().parentStep },
+        data: { parent_step: getEventContext().parentStep, input: this.rootInput },
         meta: this.chronicleOptions?.defaults?.metadata,
         source: this.name,
         sourceId: this.id,
@@ -209,8 +208,8 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             ...this.chronicleOptions?.defaults,
             metadata: {
               ...this.chronicleOptions?.defaults?.metadata,
-              step_index: this.eventStep,
-              step: this.currentState.state,
+              step_index: this.stepIndex,
+              step: this.eventStep,
             },
           },
         };
@@ -222,6 +221,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
           this.eventCb({
             ...e,
+            data: e.data || null,
             meta: chronicleOptions.defaults.metadata,
             source: this.name,
             sourceId: this.id,

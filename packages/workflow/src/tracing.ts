@@ -6,6 +6,7 @@ import opentelemetry, {
   SpanStatusCode,
 } from '@opentelemetry/api';
 import { NotifyArgs } from './types.js';
+import { uuidv7 } from 'uuidv7';
 
 export const tracer = opentelemetry.trace.getTracer('ramus');
 
@@ -13,7 +14,7 @@ export const tracer = opentelemetry.trace.getTracer('ramus');
  * for the workflow. */
 export function runStep<T>(
   spanName: string,
-  parentStep: number | null,
+  parentStep: string | null,
   options: SpanOptions,
   parentSpan: opentelemetry.Context | undefined,
   f: (span: Span) => Promise<T>
@@ -76,15 +77,13 @@ export function toSpanAttributeValue(v: AttributeValue | object): AttributeValue
 export const asyncEventStorage = new AsyncLocalStorage<EventContext>();
 
 export interface EventContext {
-  parentStep: number | null;
-  currentStep: number | null;
-  stepCounter: StepCounter;
+  parentStep: string | null;
+  currentStep: string | null;
 }
 
 export function getEventContext(): EventContext {
   return (
     asyncEventStorage.getStore() ?? {
-      stepCounter: new StepCounter(0),
       parentStep: null,
       currentStep: null,
     }
@@ -93,11 +92,9 @@ export function getEventContext(): EventContext {
 
 export interface RunWithEventContextOptions<T> {
   /** Use this parent step */
-  parentStep?: number | null;
+  parentStep?: string | null;
   /** Initialize with this step number instead of 0. */
-  currentStep?: number;
-  /** The old value from the StepCounter, if restoring this context. */
-  stepCounterValue?: number;
+  currentStep?: string;
   /** Create a new context, even if we're already in one. */
   forceNewContext?: boolean;
   /** The function to run. */
@@ -111,9 +108,6 @@ export function runWithEventContext<T>(options: RunWithEventContextOptions<T>): 
     return options.fn();
   } else {
     let context = {
-      stepCounter: new StepCounter(
-        options.stepCounterValue ?? options.currentStep ?? options.parentStep ?? 0
-      ),
       parentStep: options.parentStep ?? null,
       currentStep: options.currentStep ?? null,
     };
@@ -123,25 +117,13 @@ export function runWithEventContext<T>(options: RunWithEventContextOptions<T>): 
 }
 
 /** Run a new step, recording the current step as the step's parent. */
-function runNewStepInternal<T>(parentStep: number | null, fn: () => T): T {
+function runNewStepInternal<T>(parentStep: string | null, fn: () => T): T {
   let currentContext = getEventContext();
   let newContext = {
     ...currentContext,
     parentStep,
-    currentStep: currentContext.stepCounter.next(),
+    currentStep: uuidv7(),
   };
 
   return asyncEventStorage.run(newContext, fn);
-}
-
-export class StepCounter {
-  count: number;
-
-  constructor(initial: number) {
-    this.count = initial;
-  }
-
-  next() {
-    return this.count++;
-  }
 }

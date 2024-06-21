@@ -55,7 +55,7 @@ export interface BuildRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   cache?: NodeResultCache;
   semaphores?: Semaphore[];
   autorun?: () => boolean;
-  parentStep: number;
+  parentStep: string;
 }
 
 export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
