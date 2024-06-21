@@ -4,7 +4,7 @@ import { WorkflowEventCallback } from '../events.js';
 import type { AnyInputs, Dag, DagNodeState } from './types.js';
 import { CompiledDag } from './compile.js';
 import { DagNodeRunner } from './node_runner.js';
-import { runInSpan } from '../tracing.js';
+import { getEventContext, runInSpan } from '../tracing.js';
 import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
@@ -51,7 +51,8 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   autorun: () => boolean;
   input: ROOTINPUT;
   output: OUTPUT | undefined;
-  step = 0;
+  step: number;
+  parentStep: number | null;
   /* A promise which resolves when the entire DAG finishes or rejects on an error. */
   _finished: Promise<OUTPUT> | undefined;
 
@@ -77,6 +78,10 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
     this.chronicleOptions = chronicle;
     this.eventCb = eventCb ?? noop;
+    const eventContext = getEventContext();
+
+    this.step = eventContext.stepCounter.next();
+    this.parentStep = eventContext.parentStep;
 
     const { runners, outputNode } = dag.buildRunners({
       dagId: this.id,
@@ -87,6 +92,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
       cache,
       autorun,
       semaphores,
+      parentStep: this.step,
     });
 
     this.name = name ? `${name}: ${dag.config.name}` : dag.config.name;
@@ -115,11 +121,12 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   run(): Promise<void> {
     return runInSpan(`DAG ${this.name}`, {}, async (span) => {
       this.eventCb({
-        data: { input: this.input },
+        type: 'dag:start',
+        data: { input: this.input, parent_step: this.parentStep },
+        step: this.step,
         sourceId: this.id,
         source: this.name,
         sourceNode: '',
-        type: 'dag:start',
         meta: this.chronicleOptions?.defaults?.metadata,
       });
 
@@ -153,6 +160,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           source: this.name,
           sourceId: this.id,
           sourceNode: '',
+          step: this.step,
           type: 'dag:finish',
           meta: this.chronicleOptions?.defaults?.metadata,
         });

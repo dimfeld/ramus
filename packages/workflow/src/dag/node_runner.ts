@@ -1,7 +1,14 @@
 import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
-import { addSpanEvent, runInSpan, toSpanAttributeValue, tracer } from '../tracing.js';
+import {
+  addSpanEvent,
+  getEventContext,
+  runInSpan,
+  runStep,
+  toSpanAttributeValue,
+  tracer,
+} from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
@@ -22,13 +29,6 @@ export interface RunnerErrorResult {
 
 export type RunnerResult<DATA> = RunnerSuccessResult<DATA> | RunnerErrorResult;
 
-export class StepAllocator {
-  count = 0;
-  next() {
-    return this.count++;
-  }
-}
-
 export interface DagNodeRunnerOptions<
   CONTEXT extends object,
   ROOTINPUT,
@@ -38,7 +38,6 @@ export interface DagNodeRunnerOptions<
   name: string;
   dagName: string;
   dagId: string;
-  stepAllocator: StepAllocator;
   config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   /** External input passed when running the DAG */
@@ -48,6 +47,7 @@ export interface DagNodeRunnerOptions<
   eventCb: WorkflowEventCallback;
   autorun?: () => boolean;
   semaphores?: Semaphore[];
+  parentStep: number;
 }
 
 export class DagNodeRunner<
@@ -75,8 +75,8 @@ export class DagNodeRunner<
   semaphores?: Semaphore[];
   autorun: () => boolean;
   eventCb: WorkflowEventCallback;
+  parentStep: number | null;
   step: number | undefined;
-  stepAllocator: StepAllocator;
   /** A promise which resolves when the node finishes or rejects on an error. */
   _finished: Promise<{ name: string; output: OUTPUT }> | undefined;
 
@@ -96,7 +96,7 @@ export class DagNodeRunner<
     eventCb,
     autorun,
     semaphores,
-    stepAllocator,
+    parentStep,
   }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
@@ -113,7 +113,7 @@ export class DagNodeRunner<
     this.semaphores = semaphores;
     this.waiting = new Set();
     this.inputs = {};
-    this.stepAllocator = stepAllocator;
+    this.parentStep = parentStep;
   }
 
   get finished() {
@@ -223,7 +223,7 @@ export class DagNodeRunner<
       return;
     }
 
-    this.step = this.stepAllocator.next();
+    this.step = getEventContext().stepCounter.next();
   }
 
   async run(triggeredFromParentFinished = false): Promise<boolean> {
@@ -285,7 +285,7 @@ export class DagNodeRunner<
 
     let semRelease: (() => Promise<void>) | undefined;
     try {
-      await tracer.startActiveSpan(step, {}, parentContext, async (span) => {
+      await runStep(step, this.parentStep, {}, parentContext, async (span) => {
         if (semaphoreKey && this.semaphores?.length) {
           this.setState('pendingSemaphore');
           semRelease = await runInSpan(
@@ -297,7 +297,10 @@ export class DagNodeRunner<
 
         this.setState('running');
         try {
-          notify({ type: 'dag:node_start', data: { input: this.inputs } });
+          notify({
+            type: 'dag:node_start',
+            data: { input: this.inputs, parent_step: this.parentStep },
+          });
           if (this.config.parents) {
             span.setAttribute('dag.node.parents', this.config.parents.join(', '));
           }

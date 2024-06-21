@@ -6,7 +6,14 @@ import { CancelledError } from '../errors.js';
 import { WorkflowEventCallback } from '../events.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
 import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js';
-import { addSpanEvent, runInSpan, runInSpanWithParent, toSpanAttributeValue } from '../tracing.js';
+import {
+  addSpanEvent,
+  getEventContext,
+  runInSpan,
+  runInSpanWithParent,
+  runStep,
+  toSpanAttributeValue,
+} from '../tracing.js';
 import {
   StateMachine,
   StateMachineNodeInput,
@@ -66,6 +73,8 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   semaphores?: Semaphore[];
   parentSpanContext?: opentelemetry.Context;
   stepIndex = 0;
+  eventStep = 0;
+  machineStep: number | null = null;
   eventQueue: StateMachineSendEventOptions[] = [];
   _finished: Promise<OUTPUT> | undefined;
 
@@ -160,9 +169,26 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   }
 
   step() {
+    if (this.machineStep === null) {
+      this.machineStep = getEventContext().stepCounter.next();
+    }
+
+    if (this.machineStatus === 'initial') {
+      this.eventCb({
+        type: 'state_machine:start',
+        data: { parent_step: getEventContext().parentStep },
+        meta: this.chronicleOptions?.defaults?.metadata,
+        source: this.name,
+        sourceId: this.id,
+        sourceNode: '',
+        step: this.machineStep,
+      });
+    }
+
     this.stepIndex += 1;
-    return runInSpan(
+    return runStep(
       `machine ${this.name} ${this.currentState}`,
+      this.machineStep,
       {
         attributes: {
           machine: this.name,
@@ -172,7 +198,9 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           context: toSpanAttributeValue(this.context),
         },
       },
+      undefined,
       async (span) => {
+        this.eventStep = getEventContext().currentStep!;
         let config = this.config.nodes[this.currentState.state];
 
         let chronicleOptions = {
@@ -181,7 +209,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             ...this.chronicleOptions?.defaults,
             metadata: {
               ...this.chronicleOptions?.defaults?.metadata,
-              step_index: this.stepIndex,
+              step_index: this.eventStep,
               step: this.currentState.state,
             },
           },
@@ -198,13 +226,9 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             source: this.name,
             sourceId: this.id,
             sourceNode: this.currentState.state,
-            step: this.stepIndex,
+            step: this.eventStep,
           });
         };
-
-        if (this.machineStatus === 'initial') {
-          notify({ type: 'state_machine:start' }, false);
-        }
 
         let semRelease: SemaphoreReleaser | undefined;
         try {
@@ -217,11 +241,12 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             type: 'state_machine:node_start',
             sourceId: this.id,
             source: this.name,
-            step: this.stepIndex,
+            step: this.eventStep,
             sourceNode: this.currentState.state,
             data: {
               input: this.currentState.input,
               event: this.currentState.event,
+              parent_step: this.machineStep,
             },
           });
 
@@ -251,7 +276,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             type: 'state_machine:node_finish',
             sourceId: this.id,
             source: this.name,
-            step: this.stepIndex,
+            step: this.eventStep,
             sourceNode: this.currentState.state,
             data: {
               output: this.currentState.output,
@@ -344,7 +369,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
       type: 'state_machine:status',
       sourceId: this.id,
       source: this.name,
-      step: this.stepIndex,
+      step: this.eventStep,
       sourceNode: this.currentState.state,
       data: {
         status: newStatus,
@@ -440,7 +465,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
       },
       sourceId: this.id,
       source: this.name,
-      step: this.stepIndex,
+      step: this.eventStep,
       sourceNode: this.currentState.state,
     });
 

@@ -16,15 +16,24 @@ export interface WorkflowEventBase<TYPE extends string, DATA> {
   end_time?: Date;
 }
 
-export type DagStartEvent = WorkflowEventBase<'dag:start', { input: unknown }>;
+export type DagStartEvent = WorkflowEventBase<
+  'dag:start',
+  { input: unknown; parent_step: number | null }
+>;
 export type DagErrorEvent = WorkflowEventBase<'dag:error', { error: Error }>;
 export type DagFinishEvent = WorkflowEventBase<'dag:finish', { output: unknown }>;
-export type DagNodeStartEvent = WorkflowEventBase<'dag:node_start', { input: AnyInputs }>;
+export type DagNodeStartEvent = WorkflowEventBase<
+  'dag:node_start',
+  { parent_step: number; input: AnyInputs }
+>;
 export type DagNodeFinishEvent = WorkflowEventBase<'dag:node_finish', { output: unknown }>;
 export type DagNodeErrorEvent = WorkflowEventBase<'dag:node_error', { error: Error }>;
 export type DagNodeStateEvent = WorkflowEventBase<'dag:node_state', { state: DagNodeState }>;
 
-export type StateMachineStartEvent = WorkflowEventBase<'state_machine:start', {}>;
+export type StateMachineStartEvent = WorkflowEventBase<
+  'state_machine:start',
+  { parent_step: number | null }
+>;
 export type StateMachineStatusEvent = WorkflowEventBase<
   'state_machine:status',
   { status: StateMachineStatus }
@@ -33,6 +42,7 @@ export type StateMachineNodeStartEvent = WorkflowEventBase<
   'state_machine:node_start',
   {
     input: unknown;
+    parent_step: number;
     event?: {
       type: string;
       data: unknown;
