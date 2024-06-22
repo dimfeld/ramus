@@ -28,6 +28,7 @@ export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = un
   /** A function that returns if the DAG should run nodes whenever they become ready, or wait for an external source to
    * run them. */
   autorun?: () => boolean;
+  parentStep?: string;
 }
 
 function noop() {}
@@ -66,6 +67,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     cache,
     autorun,
     semaphores,
+    parentStep,
   }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT>) {
     super();
     if (!(dag instanceof CompiledDag)) {
@@ -81,7 +83,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     const eventContext = getEventContext();
 
     this.step = uuidv7();
-    this.parentStep = eventContext.parentStep;
+    this.parentStep = parentStep ?? eventContext.currentStep;
 
     const { runners, outputNode } = dag.buildRunners({
       dagId: this.id,

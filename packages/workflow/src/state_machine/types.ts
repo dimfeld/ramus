@@ -85,8 +85,8 @@ export type StateMachineTransitionGuard<
   | boolean
   | undefined
   | {
-      /** If true or omitted, run this transition */
-      transition?: boolean;
+      /** If true, run this transition */
+      transition: boolean;
       // TODO Not implemented yet
       // /** If set, wait this long to trigger the transition. Other events can arrive and trigger a different
       //  * transition in the meantime. */

@@ -175,7 +175,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     if (this.machineStatus === 'initial') {
       this.eventCb({
         type: 'state_machine:start',
-        data: { parent_step: getEventContext().parentStep, input: this.rootInput },
+        data: { parent_step: getEventContext().currentStep, input: this.rootInput },
         meta: this.chronicleOptions?.defaults?.metadata,
         source: this.name,
         sourceId: this.id,

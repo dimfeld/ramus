@@ -2,13 +2,23 @@ import { expect, test } from 'bun:test';
 
 import { DagRunner, runDag } from './runner.js';
 import { Dag, DagConfiguration } from './types.js';
+import { WorkflowEvent } from '../events.js';
+import { runWithEventContext } from '../tracing.js';
 
 interface Context {
   ctxValue: number;
 }
 
+function eventCatcher() {
+  let events: WorkflowEvent[] = [];
+  return {
+    eventCb: (e) => events.push(e),
+    events,
+  };
+}
+
 test('simple DAG', async () => {
-  const nodes: DagConfiguration<Context> = {
+  const nodes: DagConfiguration<Context, number> = {
     root: {
       run: async ({ context }) => {
         return context.ctxValue + 1;
@@ -34,14 +44,85 @@ test('simple DAG', async () => {
     },
   };
 
+  const { eventCb, events } = eventCatcher();
+
   const dag: Dag<Context, number> = {
     name: 'test',
+    context: () => ({ ctxValue: 10 }),
     nodes,
   };
 
-  let result = await runDag({ dag, input: 10, context: { ctxValue: 5 } });
+  let result = await runDag({ dag, input: 10, context: { ctxValue: 5 }, eventCb });
   // 2 * ((5 + 1) + 1) + 10
   expect(result).toEqual(24);
+
+  const startEvent = events[0];
+  expect(startEvent.type).toEqual('dag:start');
+  expect(startEvent.step).toBeString();
+
+  const nodeStartEvents = events.filter((e) => e.type === 'dag:node_start');
+  expect(nodeStartEvents.length).toEqual(5);
+
+  for (let event of nodeStartEvents) {
+    expect(event.data.parent_step).toEqual(startEvent.step);
+  }
+});
+
+test('running from parent context', async () => {
+  const nodes: DagConfiguration<Context, number> = {
+    root: {
+      run: async ({ context }) => {
+        return context.ctxValue + 1;
+      },
+    },
+    intone: {
+      parents: ['root'],
+      run: async ({ input }) => {
+        return input.root + 1;
+      },
+    },
+    inttwo: {
+      parents: ['root'],
+      run: async ({ input }) => {
+        return input.root + 1;
+      },
+    },
+    collector: {
+      parents: ['intone', 'inttwo'],
+      run: async ({ input, rootInput }) => {
+        return input.intone + input.inttwo + rootInput;
+      },
+    },
+  };
+
+  const { eventCb, events } = eventCatcher();
+
+  const dag: Dag<Context, number> = {
+    name: 'test',
+    context: () => ({ ctxValue: 10 }),
+    nodes,
+  };
+
+  let result = await runWithEventContext({
+    parentStep: 'abc',
+    currentStep: 'def',
+    fn: () => runDag({ dag, input: 10, context: { ctxValue: 5 }, eventCb }),
+  });
+  // 2 * ((5 + 1) + 1) + 10
+  expect(result).toEqual(24);
+
+  const startEvent = events[0];
+  expect(startEvent.type).toEqual('dag:start');
+  expect(startEvent.step).not.toEqual('abc');
+  expect(startEvent.step).not.toEqual('def');
+  expect(startEvent.data.parent_step).toEqual('def');
+
+  const nodeStartEvents = events.filter((e) => e.type === 'dag:node_start');
+  expect(nodeStartEvents.length).toEqual(5);
+
+  for (let event of nodeStartEvents) {
+    expect(event.data.parent_step).toEqual(startEvent.step);
+  }
 });
 
 test('single node', async () => {
@@ -68,6 +149,7 @@ test('no nodes', async () => {
 
   const dag: Dag<Context, undefined> = {
     name: 'test',
+    context: () => ({ ctxValue: 10 }),
     nodes,
   };
 
@@ -96,8 +178,9 @@ test('multiple root nodes', async () => {
     },
   };
 
-  const dag: Dag<Context> = {
+  const dag: Dag<Context, number> = {
     name: 'test',
+    context: () => ({ ctxValue: 10 }),
     nodes,
   };
 
@@ -128,6 +211,7 @@ test('multiple leaf nodes', async () => {
 
   const dag: Dag<Context, undefined> = {
     name: 'test',
+    context: () => ({ ctxValue: 10 }),
     nodes,
   };
 
@@ -161,6 +245,7 @@ test('node error when tolerating failures', async () => {
 
   const dag: Dag<Context, undefined> = {
     name: 'test',
+    context: () => ({ ctxValue: 10 }),
     nodes,
     tolerateFailures: true,
   };
@@ -195,6 +280,7 @@ test('node error when not tolerating failures', async () => {
 
   const dag: Dag<Context, undefined> = {
     name: 'test',
+    context: () => ({ ctxValue: 10 }),
     nodes,
   };
 

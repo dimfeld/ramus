@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { StateMachineRunner } from './runner.js';
 import type { StateMachine } from './types.js';
 import { WorkflowEvent } from '../events.js';
+import { runStep, runWithEventContext } from '../tracing.js';
 
 test('regular state machine', async () => {
   const config: StateMachine<{ value: number }, number> = {
@@ -45,17 +46,37 @@ test('regular state machine', async () => {
     eventCb: (e) => events.push(e),
   });
 
-  await machine.step();
-  expect(machine.canStep()).toBe(true);
-  expect(machine.state).toBe('one');
-  expect(machine.machineStatus).toBe('ready');
-  expect(machine.currentState.input).toBe(1);
+  await runWithEventContext({
+    currentStep: 'abc',
+    parentStep: 'def',
+    fn: async () => {
+      await machine.step();
+      expect(machine.canStep()).toBe(true);
+      expect(machine.state).toBe('one');
+      expect(machine.machineStatus).toBe('ready');
+      expect(machine.currentState.input).toBe(1);
 
-  await machine.run();
-  expect(machine.canStep()).toBe(false);
-  expect(machine.state).toBe('done');
-  expect(machine.machineStatus).toBe('final');
-  expect(machine.currentState.input).toBe(72);
+      await machine.run();
+      expect(machine.canStep()).toBe(false);
+      expect(machine.state).toBe('done');
+      expect(machine.machineStatus).toBe('final');
+      expect(machine.currentState.input).toBe(72);
+    },
+  });
+
+  const startEvent = events[0];
+  expect(startEvent.type).toEqual('state_machine:start');
+  expect(startEvent.step).toBeString();
+  expect(startEvent.step).not.toEqual('abc');
+  expect(startEvent.step).not.toEqual('def');
+  expect(startEvent.data.parent_step).toEqual('abc');
+
+  const nodeStartEvents = events.filter((e) => e.type === 'state_machine:node_start');
+  expect(nodeStartEvents.length).toEqual(6);
+
+  for (let event of nodeStartEvents) {
+    expect(event.data.parent_step).toEqual(startEvent.step);
+  }
 });
 
 test('cancellation', async () => {
