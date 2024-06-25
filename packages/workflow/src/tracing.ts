@@ -127,3 +127,7 @@ function runNewStepInternal<T>(parentStep: string | null, fn: () => T): T {
 
   return asyncEventStorage.run(newContext, fn);
 }
+
+export function stepSpanId(span: Span | undefined) {
+  return span?.isRecording() ? span.spanContext().spanId : null;
+}

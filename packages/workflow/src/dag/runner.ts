@@ -4,7 +4,7 @@ import { WorkflowEventCallback } from '../events.js';
 import type { AnyInputs, Dag, DagNodeState } from './types.js';
 import { CompiledDag } from './compile.js';
 import { DagNodeRunner } from './node_runner.js';
-import { getEventContext, runInSpan } from '../tracing.js';
+import { getEventContext, runInSpan, stepSpanId } from '../tracing.js';
 import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
@@ -121,10 +121,10 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
   /** Run the entire DAG to completion */
   run(): Promise<void> {
-    return runInSpan(`DAG ${this.name}`, {}, async () => {
+    return runInSpan(`DAG ${this.name}`, {}, async (span) => {
       this.eventCb({
         type: 'dag:start',
-        data: { input: this.input, parent_step: this.parentStep },
+        data: { input: this.input, parent_step: this.parentStep, span_id: stepSpanId(span) },
         step: this.step,
         sourceId: this.id,
         source: this.name,

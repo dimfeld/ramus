@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
-import { addSpanEvent, runInSpan, runStep, toSpanAttributeValue } from '../tracing.js';
+import { addSpanEvent, runInSpan, runStep, stepSpanId, toSpanAttributeValue } from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
@@ -293,7 +293,7 @@ export class DagNodeRunner<
         try {
           notify({
             type: 'dag:node_start',
-            data: { input: this.inputs, parent_step: this.parentStep },
+            data: { input: this.inputs, parent_step: this.parentStep, span_id: stepSpanId(span) },
           });
           if (this.config.parents) {
             span.setAttribute('dag.node.parents', this.config.parents.join(', '));

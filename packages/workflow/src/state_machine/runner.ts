@@ -11,6 +11,7 @@ import {
   getEventContext,
   runInSpanWithParent,
   runStep,
+  stepSpanId,
   toSpanAttributeValue,
 } from '../tracing.js';
 import {
@@ -175,7 +176,11 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     if (this.machineStatus === 'initial') {
       this.eventCb({
         type: 'state_machine:start',
-        data: { parent_step: getEventContext().currentStep, input: this.rootInput },
+        data: {
+          parent_step: getEventContext().currentStep,
+          span_id: stepSpanId(opentelemetry.trace.getActiveSpan()),
+          input: this.rootInput,
+        },
         meta: this.chronicleOptions?.defaults?.metadata,
         source: this.name,
         sourceId: this.id,
@@ -247,6 +252,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
               input: this.currentState.input,
               event: this.currentState.event,
               parent_step: this.machineStep,
+              span_id: stepSpanId(span),
             },
           });
 
@@ -459,8 +465,10 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         to: nextState,
         input: this.currentState.input,
         output: this.currentState.output,
-        event: eventType,
-        eventData: eventData,
+        event: {
+          type: eventType,
+          data: eventData,
+        },
         final: nextNode.final,
       },
       sourceId: this.id,

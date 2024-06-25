@@ -20,13 +20,13 @@ export interface WorkflowEventBase<TYPE extends string, DATA> {
 
 export type DagStartEvent = WorkflowEventBase<
   'dag:start',
-  { input: unknown; parent_step: string | null }
+  { input: unknown; parent_step: string | null; span_id: string | null }
 >;
 export type DagErrorEvent = WorkflowEventBase<'dag:error', { error: Error }>;
 export type DagFinishEvent = WorkflowEventBase<'dag:finish', { output: unknown }>;
 export type DagNodeStartEvent = WorkflowEventBase<
   'dag:node_start',
-  { parent_step: string; input: AnyInputs }
+  { parent_step: string; span_id: string | null; input: AnyInputs }
 >;
 export type DagNodeFinishEvent = WorkflowEventBase<'dag:node_finish', { output: unknown }>;
 export type DagNodeErrorEvent = WorkflowEventBase<'dag:node_error', { error: Error }>;
@@ -35,13 +35,13 @@ export type DagNodeStateEvent = WorkflowEventBase<'dag:node_state', { state: Dag
 /** Starting a generic type of step implemented by the agent itself. */
 export type StepStartEvent = WorkflowEventBase<
   'step:start',
-  { parent_step: string | null; step_type: string; input: unknown }
+  { parent_step: string | null; step_type: string; span_id: string | null; input: unknown }
 >;
 export type StepEndEvent = WorkflowEventBase<'step:end', { output: unknown }>;
 
 export type StateMachineStartEvent = WorkflowEventBase<
   'state_machine:start',
-  { parent_step: string | null; input: unknown }
+  { parent_step: string | null; span_id: string | null; input: unknown }
 >;
 export type StateMachineStatusEvent = WorkflowEventBase<
   'state_machine:status',
@@ -52,6 +52,7 @@ export type StateMachineNodeStartEvent = WorkflowEventBase<
   {
     input: unknown;
     parent_step: string;
+    span_id: string | null;
     event?: {
       type: string;
       data: unknown;
@@ -67,8 +68,10 @@ export type StateMachineNodeFinishEvent = WorkflowEventBase<
 export type StateMachineTransitionEvent = WorkflowEventBase<
   'state_machine:transition',
   {
-    event: string;
-    eventData: unknown;
+    event?: {
+      type: string;
+      data: unknown;
+    };
     input: unknown;
     output: unknown;
     from: string;
