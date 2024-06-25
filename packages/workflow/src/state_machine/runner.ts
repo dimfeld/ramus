@@ -191,18 +191,22 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
     this.stepIndex += 1;
     return runStep(
-      `machine ${this.name} ${this.currentState}`,
-      this.machineStep,
       {
-        attributes: {
-          machine: this.name,
-          step: this.currentState.state,
-          step_index: this.stepIndex,
-          input: toSpanAttributeValue(this.currentState.input),
-          context: toSpanAttributeValue(this.context),
+        name: `machine ${this.name} ${this.currentState}`,
+        parentStep: this.machineStep,
+        // we emitted our own event above
+        skipLogging: true,
+        newSourceName: this.name,
+        spanOptions: {
+          attributes: {
+            machine: this.name,
+            step: this.currentState.state,
+            step_index: this.stepIndex,
+            input: toSpanAttributeValue(this.currentState.input),
+            context: toSpanAttributeValue(this.context),
+          },
         },
       },
-      undefined,
       async (span) => {
         this.eventStep = getEventContext().currentStep!;
         let config = this.config.nodes[this.currentState.state];

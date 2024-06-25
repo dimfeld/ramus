@@ -7,22 +7,40 @@ import opentelemetry, {
 } from '@opentelemetry/api';
 import { NotifyArgs } from './types.js';
 import { uuidv7 } from 'uuidv7';
+import { WorkflowEvent, WorkflowEventCallback } from './events.js';
 
 export const tracer = opentelemetry.trace.getTracer('ramus');
 
-/** Run a step of a workflow. This both adds a tracing span and sets up the step counters
- * for the workflow. */
-export function runStep<T>(
-  spanName: string,
-  parentStep: string | null,
-  options: SpanOptions,
-  parentSpan: opentelemetry.Context | undefined,
-  f: (span: Span) => Promise<T>
-) {
-  return runInSpanWithParent(spanName, options, parentSpan, (span) => {
-    return runNewStepInternal(parentStep, () => {
-      return f(span);
-    });
+export interface StepOptions {
+  name: string;
+  type?: string;
+  info?: object;
+  spanOptions?: SpanOptions;
+  /** Override the parent step */
+  parentStep?: string | null;
+  /** Override the parent span */
+  parentSpan?: opentelemetry.Context;
+  /** If true, skip logging the step since it's being done manually. */
+  skipLogging?: boolean;
+  newSourceName?: string;
+  input?: unknown;
+}
+
+/** Run a step of a workflow. This both adds a tracing span and starts a new step in the
+ * workflow's event tracking. */
+export function runStep<T>(options: StepOptions, f: (span: Span, ctx: EventContext) => Promise<T>) {
+  let spanOptions: SpanOptions = options.spanOptions ?? {};
+  if (options.info) {
+    spanOptions.attributes = {
+      ...spanOptions.attributes,
+      ...Object.fromEntries(
+        Object.entries(options.info).map(([k, v]) => [k, toSpanAttributeValue(v)])
+      ),
+    };
+  }
+
+  return runInSpanWithParent(options.name, spanOptions, options.parentSpan, (span) => {
+    return runNewStepInternal(options, span, (ctx) => f(span, ctx));
   });
 }
 
@@ -77,24 +95,34 @@ export function toSpanAttributeValue(v: AttributeValue | object): AttributeValue
 export const asyncEventStorage = new AsyncLocalStorage<EventContext>();
 
 export interface EventContext {
+  runId: string;
+  sourceName: string;
   parentStep: string | null;
   currentStep: string | null;
+  logEvent: WorkflowEventCallback;
 }
 
 export function getEventContext(): EventContext {
   return (
     asyncEventStorage.getStore() ?? {
+      runId: uuidv7(),
+      sourceName: '',
       parentStep: null,
       currentStep: null,
+      logEvent: () => {},
     }
   );
 }
 
 export interface RunWithEventContextOptions<T> {
+  /** An existing run ID */
+  runId?: string;
+  sourceName?: string;
   /** Use this parent step */
   parentStep?: string | null;
   /** Initialize with this step number instead of 0. */
   currentStep?: string;
+  logEvent?: WorkflowEventCallback;
   /** Create a new context, even if we're already in one. */
   forceNewContext?: boolean;
   /** The function to run. */
@@ -108,8 +136,11 @@ export function runWithEventContext<T>(options: RunWithEventContextOptions<T>): 
     return options.fn();
   } else {
     let context = {
+      runId: options.runId ?? uuidv7(),
+      sourceName: options.sourceName ?? '',
       parentStep: options.parentStep ?? null,
       currentStep: options.currentStep ?? null,
+      logEvent: options.logEvent ?? (() => {}),
     };
 
     return asyncEventStorage.run(context, options.fn);
@@ -117,17 +148,87 @@ export function runWithEventContext<T>(options: RunWithEventContextOptions<T>): 
 }
 
 /** Run a new step, recording the current step as the step's parent. */
-function runNewStepInternal<T>(parentStep: string | null, fn: () => T): T {
-  let currentContext = getEventContext();
-  let newContext = {
-    ...currentContext,
-    parentStep,
+async function runNewStepInternal<T>(
+  options: StepOptions,
+  span: Span,
+  fn: (ctx: EventContext) => Promise<T>
+): Promise<T> {
+  const { skipLogging, name, type, info, newSourceName, parentStep, input } = options;
+  let oldContext = getEventContext();
+  let newContext: EventContext = {
+    ...oldContext,
+    sourceName: newSourceName ?? oldContext.sourceName,
+    parentStep: parentStep ?? oldContext.currentStep,
     currentStep: uuidv7(),
   };
 
-  return asyncEventStorage.run(newContext, fn);
+  return asyncEventStorage.run(newContext, async () => {
+    let startTime = new Date();
+    if (!skipLogging) {
+      newContext.logEvent({
+        type: 'step:start',
+        source: newContext.sourceName,
+        sourceNode: name,
+        step: newContext.currentStep ?? undefined,
+        sourceId: newContext.runId,
+        start_time: startTime,
+        data: {
+          input,
+          step_type: type ?? 'step',
+          info: info,
+          parent_step: newContext.parentStep,
+          span_id: stepSpanId(span),
+        },
+      });
+    }
+
+    const retVal = await fn(newContext);
+
+    if (!skipLogging) {
+      newContext.logEvent({
+        type: 'step:end',
+        source: newContext.sourceName,
+        sourceNode: name,
+        sourceId: newContext.runId,
+        step: newContext.currentStep ?? undefined,
+        start_time: startTime,
+        end_time: new Date(),
+        data: {
+          output: retVal,
+        },
+      });
+    }
+
+    return retVal;
+  });
 }
 
 export function stepSpanId(span: Span | undefined) {
   return span?.isRecording() ? span.spanContext().spanId : null;
+}
+
+export interface AsStepOptions {
+  name?: string;
+  type?: string;
+}
+
+/** Wrap a function so that it runs as a step.
+ *
+ *  export const doIt = asStep(async doIt(input) => {
+ *    await callModel(input)
+ *  })
+ * */
+export function asStep<P extends unknown[] = unknown[], RET = unknown>(
+  fn: (...args: P) => Promise<RET>,
+  options?: AsStepOptions
+): (...args: P) => Promise<RET> {
+  const name = options?.name ?? fn.name;
+  return (...args: P) =>
+    runStep(
+      {
+        name,
+        input: args.length > 1 ? args : args[0],
+      },
+      () => fn(...args)
+    );
 }

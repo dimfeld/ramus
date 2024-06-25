@@ -18,41 +18,41 @@ export interface WorkflowEventBase<TYPE extends string, DATA> {
   end_time?: Date;
 }
 
-export type DagStartEvent = WorkflowEventBase<
-  'dag:start',
-  { input: unknown; parent_step: string | null; span_id: string | null }
->;
+export interface StepStartData {
+  parent_step: string | null;
+  step_type: string;
+  span_id: string | null;
+  info: object | undefined;
+  input: unknown;
+}
+
+export interface StepEndData {
+  output: unknown;
+}
+
+export type DagStartEvent = WorkflowEventBase<'dag:start', StepStartData>;
 export type DagErrorEvent = WorkflowEventBase<'dag:error', { error: Error }>;
-export type DagFinishEvent = WorkflowEventBase<'dag:finish', { output: unknown }>;
+export type DagFinishEvent = WorkflowEventBase<'dag:finish', StepEndData>;
 export type DagNodeStartEvent = WorkflowEventBase<
   'dag:node_start',
-  { parent_step: string; span_id: string | null; input: AnyInputs }
+  StepStartData & { input: AnyInputs }
 >;
-export type DagNodeFinishEvent = WorkflowEventBase<'dag:node_finish', { output: unknown }>;
+export type DagNodeFinishEvent = WorkflowEventBase<'dag:node_finish', StepEndData>;
 export type DagNodeErrorEvent = WorkflowEventBase<'dag:node_error', { error: Error }>;
 export type DagNodeStateEvent = WorkflowEventBase<'dag:node_state', { state: DagNodeState }>;
 
 /** Starting a generic type of step implemented by the agent itself. */
-export type StepStartEvent = WorkflowEventBase<
-  'step:start',
-  { parent_step: string | null; step_type: string; span_id: string | null; input: unknown }
->;
-export type StepEndEvent = WorkflowEventBase<'step:end', { output: unknown }>;
+export type StepStartEvent = WorkflowEventBase<'step:start', StepStartData>;
+export type StepEndEvent = WorkflowEventBase<'step:end', StepEndData>;
 
-export type StateMachineStartEvent = WorkflowEventBase<
-  'state_machine:start',
-  { parent_step: string | null; span_id: string | null; input: unknown }
->;
+export type StateMachineStartEvent = WorkflowEventBase<'state_machine:start', StepStartData>;
 export type StateMachineStatusEvent = WorkflowEventBase<
   'state_machine:status',
   { status: StateMachineStatus }
 >;
 export type StateMachineNodeStartEvent = WorkflowEventBase<
   'state_machine:node_start',
-  {
-    input: unknown;
-    parent_step: string;
-    span_id: string | null;
+  StepStartData & {
     event?: {
       type: string;
       data: unknown;
@@ -61,9 +61,7 @@ export type StateMachineNodeStartEvent = WorkflowEventBase<
 >;
 export type StateMachineNodeFinishEvent = WorkflowEventBase<
   'state_machine:node_finish',
-  {
-    output: unknown;
-  }
+  StepEndData
 >;
 export type StateMachineTransitionEvent = WorkflowEventBase<
   'state_machine:transition',

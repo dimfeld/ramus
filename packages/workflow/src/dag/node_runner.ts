@@ -279,95 +279,105 @@ export class DagNodeRunner<
 
     let semRelease: (() => Promise<void>) | undefined;
     try {
-      await runStep(step, this.parentStep, {}, parentContext, async (span) => {
-        if (semaphoreKey && this.semaphores?.length) {
-          this.setState('pendingSemaphore');
-          semRelease = await runInSpan(
-            step + 'acquire semaphores',
-            { attributes: { semaphoreKey } },
-            () => acquireSemaphores(this.semaphores!, semaphoreKey)
-          );
-        }
-
-        this.setState('running');
-        try {
-          notify({
-            type: 'dag:node_start',
-            data: { input: this.inputs, parent_step: this.parentStep, span_id: stepSpanId(span) },
-          });
-          if (this.config.parents) {
-            span.setAttribute('dag.node.parents', this.config.parents.join(', '));
+      await runStep(
+        {
+          name: step,
+          parentStep: this.parentStep,
+          parentSpan: parentContext,
+          skipLogging: true,
+          newSourceName: this.name,
+          type: 'dag:node',
+        },
+        async (span) => {
+          if (semaphoreKey && this.semaphores?.length) {
+            this.setState('pendingSemaphore');
+            semRelease = await runInSpan(
+              step + 'acquire semaphores',
+              { attributes: { semaphoreKey } },
+              () => acquireSemaphores(this.semaphores!, semaphoreKey)
+            );
           }
 
-          for (let [k, v] of Object.entries(this.inputs)) {
-            span.setAttribute(`dag.node.input.${k}`, toSpanAttributeValue(v));
-          }
-
-          let output: OUTPUT;
-
-          const cacheKey = this.cache
-            ? calculateCacheKey(this.config.run, this.inputs, this.rootInput)
-            : '';
-          const cachedValue = await this.cache?.get(this.name, cacheKey);
-
-          if (cachedValue) {
-            output = JSON.parse(cachedValue) as OUTPUT;
-            span.setAttribute('dag:cache_hit', true);
-          } else {
-            output = await this.config.run({
-              input: this.inputs as INPUTS,
-              rootInput: this.rootInput,
-              context: this.context,
-              span,
-              chronicleOptions,
-              notify: (e: NotifyArgs, spanEvent = true) => {
-                if (spanEvent) {
-                  addSpanEvent(span, e);
-                }
-
-                notify(e);
-              },
-              isCancelled: () => this.state === 'cancelled',
-              exitIfCancelled: () => {
-                if (this.state === 'cancelled') {
-                  throw new CancelledError();
-                }
-              },
+          this.setState('running');
+          try {
+            notify({
+              type: 'dag:node_start',
+              data: { input: this.inputs, parent_step: this.parentStep, span_id: stepSpanId(span) },
             });
+            if (this.config.parents) {
+              span.setAttribute('dag.node.parents', this.config.parents.join(', '));
+            }
 
-            this.cache?.set(this.name, cacheKey, JSON.stringify(output));
+            for (let [k, v] of Object.entries(this.inputs)) {
+              span.setAttribute(`dag.node.input.${k}`, toSpanAttributeValue(v));
+            }
+
+            let output: OUTPUT;
+
+            const cacheKey = this.cache
+              ? calculateCacheKey(this.config.run, this.inputs, this.rootInput)
+              : '';
+            const cachedValue = await this.cache?.get(this.name, cacheKey);
+
+            if (cachedValue) {
+              output = JSON.parse(cachedValue) as OUTPUT;
+              span.setAttribute('dag:cache_hit', true);
+            } else {
+              output = await this.config.run({
+                input: this.inputs as INPUTS,
+                rootInput: this.rootInput,
+                context: this.context,
+                span,
+                chronicleOptions,
+                notify: (e: NotifyArgs, spanEvent = true) => {
+                  if (spanEvent) {
+                    addSpanEvent(span, e);
+                  }
+
+                  notify(e);
+                },
+                isCancelled: () => this.state === 'cancelled',
+                exitIfCancelled: () => {
+                  if (this.state === 'cancelled') {
+                    throw new CancelledError();
+                  }
+                },
+              });
+
+              this.cache?.set(this.name, cacheKey, JSON.stringify(output));
+            }
+
+            span.setAttribute(
+              `dag.node.output.${this.name}`,
+              toSpanAttributeValue(output as object | AttributeValue)
+            );
+
+            if (this.state !== 'cancelled') {
+              notify({ type: 'dag:node_finish', data: { output } });
+              this.setState('finished');
+              this.result = { type: 'success', output };
+              this.emit('finish', { name: this.name, output });
+            }
+          } catch (e) {
+            if (e instanceof CancelledError) {
+              // Don't emit an error if we were cancelled
+            } else {
+              let err = e as Error;
+              this.setState('error');
+              this.result = { type: 'error', error: err };
+              notify({ type: 'dag:node_error', data: { error: err } });
+              this.emit('ramus:error', err);
+
+              span.recordException(err);
+              span.setAttribute('error', err?.message ?? 'true');
+              span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
+            }
+          } finally {
+            span.setAttribute('dag.node.finishState', this.state);
+            span.end();
           }
-
-          span.setAttribute(
-            `dag.node.output.${this.name}`,
-            toSpanAttributeValue(output as object | AttributeValue)
-          );
-
-          if (this.state !== 'cancelled') {
-            notify({ type: 'dag:node_finish', data: { output } });
-            this.setState('finished');
-            this.result = { type: 'success', output };
-            this.emit('finish', { name: this.name, output });
-          }
-        } catch (e) {
-          if (e instanceof CancelledError) {
-            // Don't emit an error if we were cancelled
-          } else {
-            let err = e as Error;
-            this.setState('error');
-            this.result = { type: 'error', error: err };
-            notify({ type: 'dag:node_error', data: { error: err } });
-            this.emit('ramus:error', err);
-
-            span.recordException(err);
-            span.setAttribute('error', err?.message ?? 'true');
-            span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
-          }
-        } finally {
-          span.setAttribute('dag.node.finishState', this.state);
-          span.end();
         }
-      });
+      );
     } finally {
       semRelease?.();
     }
