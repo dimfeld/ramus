@@ -103,11 +103,14 @@ test('running from parent context', async () => {
     nodes,
   };
 
-  let result = await runWithEventContext({
-    parentStep: 'abc',
-    currentStep: 'def',
-    fn: () => runDag({ dag, input: 10, context: { ctxValue: 5 }, eventCb }),
-  });
+  let result = await runWithEventContext(
+    {
+      parentStep: 'abc',
+      currentStep: 'def',
+      logEvent: eventCb,
+    },
+    () => runDag({ dag, input: 10, context: { ctxValue: 5 } })
+  );
   // 2 * ((5 + 1) + 1) + 10
   expect(result).toEqual(24);
 

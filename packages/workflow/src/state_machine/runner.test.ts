@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { StateMachineRunner } from './runner.js';
 import type { StateMachine } from './types.js';
 import { WorkflowEvent } from '../events.js';
-import { runStep, runWithEventContext } from '../tracing.js';
+import { runWithEventContext } from '../tracing.js';
 
 test('regular state machine', async () => {
   const config: StateMachine<{ value: number }, number> = {
@@ -40,16 +40,19 @@ test('regular state machine', async () => {
   };
 
   const events: WorkflowEvent[] = [];
-  const machine = new StateMachineRunner({
-    config,
-    input: 1,
-    eventCb: (e) => events.push(e),
-  });
 
-  await runWithEventContext({
-    currentStep: 'abc',
-    parentStep: 'def',
-    fn: async () => {
+  await runWithEventContext(
+    {
+      currentStep: 'abc',
+      parentStep: 'def',
+      logEvent: (e) => events.push(e),
+    },
+    async () => {
+      const machine = new StateMachineRunner({
+        config,
+        input: 1,
+      });
+
       await machine.step();
       expect(machine.canStep()).toBe(true);
       expect(machine.state).toBe('one');
@@ -61,8 +64,8 @@ test('regular state machine', async () => {
       expect(machine.state).toBe('done');
       expect(machine.machineStatus).toBe('final');
       expect(machine.currentState.input).toBe(72);
-    },
-  });
+    }
+  );
 
   const startEvent = events[0];
   expect(startEvent.type).toEqual('state_machine:start');

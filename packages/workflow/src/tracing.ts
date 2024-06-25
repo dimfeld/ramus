@@ -114,7 +114,7 @@ export function getEventContext(): EventContext {
   );
 }
 
-export interface RunWithEventContextOptions<T> {
+export interface RunWithEventContextOptions {
   /** An existing run ID */
   runId?: string;
   sourceName?: string;
@@ -125,15 +125,13 @@ export interface RunWithEventContextOptions<T> {
   logEvent?: WorkflowEventCallback;
   /** Create a new context, even if we're already in one. */
   forceNewContext?: boolean;
-  /** The function to run. */
-  fn: () => T;
 }
 
 /** Run a workflow and initialize an event context, if one does not already exist. */
-export function runWithEventContext<T>(options: RunWithEventContextOptions<T>): T {
+export function runWithEventContext<T>(options: RunWithEventContextOptions, fn: () => T): T {
   let existingContext = options.forceNewContext ? undefined : asyncEventStorage.getStore();
   if (existingContext) {
-    return options.fn();
+    return fn();
   } else {
     let context = {
       runId: options.runId ?? uuidv7(),
@@ -143,7 +141,7 @@ export function runWithEventContext<T>(options: RunWithEventContextOptions<T>): 
       logEvent: options.logEvent ?? (() => {}),
     };
 
-    return asyncEventStorage.run(context, options.fn);
+    return asyncEventStorage.run(context, fn);
   }
 }
 
@@ -210,6 +208,7 @@ export function stepSpanId(span: Span | undefined) {
 export interface AsStepOptions {
   name?: string;
   type?: string;
+  info?: object;
 }
 
 /** Wrap a function so that it runs as a step.
@@ -223,10 +222,21 @@ export function asStep<P extends unknown[] = unknown[], RET = unknown>(
   options?: AsStepOptions
 ): (...args: P) => Promise<RET> {
   const name = options?.name ?? fn.name;
+
+  if (!name) {
+    throw new Error(
+      `Step has no name. You may need to declare your function differently or explicitly provide a name`
+    );
+  }
+
+  const type = options?.type;
+  const info = options?.info;
   return (...args: P) =>
     runStep(
       {
         name,
+        type,
+        info,
         input: args.length > 1 ? args : args[0],
       },
       () => fn(...args)

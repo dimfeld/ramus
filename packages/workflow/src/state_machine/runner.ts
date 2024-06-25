@@ -38,7 +38,8 @@ export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   semaphores?: Semaphore[];
   /** Options for a Chronicle LLM proxy client */
   chronicle?: ChronicleClientOptions;
-  /** A function that can take events from the running DAG */
+  /** A function that can take events from the running state machine. This will use
+   * the configured event callback from the event context, if omitted.*/
   eventCb?: WorkflowEventCallback;
   input: ROOTINPUT;
 }
@@ -86,7 +87,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     this.rootInput = options.input;
     this.chronicleOptions = options.chronicle;
     this.semaphores = options.semaphores;
-    this.eventCb = options.eventCb ?? (() => {});
+    this.eventCb = options.eventCb ?? getEventContext().logEvent;
     this.name = options.name ? `${options.name}: ${options.config.name}` : options.config.name;
     this.id = options.id || uuidv7();
 

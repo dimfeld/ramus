@@ -31,8 +31,6 @@ export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = un
   parentStep?: string;
 }
 
-function noop() {}
-
 type DagRunnerEvents<OUTPUT> = {
   'dag:state': [{ sourceNode: string; source: string; state: DagNodeState }];
 } & RunnableEvents<OUTPUT>;
@@ -79,8 +77,8 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     this.id = uuidv7();
 
     this.chronicleOptions = chronicle;
-    this.eventCb = eventCb ?? noop;
     const eventContext = getEventContext();
+    this.eventCb = eventCb ?? eventContext.logEvent;
 
     this.step = uuidv7();
     this.parentStep = parentStep ?? eventContext.currentStep;
