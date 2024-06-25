@@ -23,7 +23,8 @@ export interface DagRunnerOptions<CONTEXT extends object, ROOTINPUT, OUTPUT = un
   semaphores?: Semaphore[];
   /** Options for a Chronicle LLM proxy client */
   chronicle?: ChronicleClientOptions;
-  /** A function that can take events from the running DAG */
+  /** A function that can take events from the running DAG. This will use the
+   * value from the event context if that is configured. */
   eventCb?: WorkflowEventCallback;
   /** A function that returns if the DAG should run nodes whenever they become ready, or wait for an external source to
    * run them. */
@@ -84,7 +85,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     this.parentStep = parentStep ?? eventContext.currentStep;
 
     const { runners, outputNode } = dag.buildRunners({
-      dagId: this.id,
+      runId: this.id,
       context,
       input,
       chronicle,
@@ -124,7 +125,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         type: 'dag:start',
         data: { input: this.input, parent_step: this.parentStep, span_id: stepSpanId(span) },
         step: this.step,
-        sourceId: this.id,
+        runId: this.id,
         source: this.name,
         sourceNode: '',
         meta: this.chronicleOptions?.defaults?.metadata,
@@ -136,7 +137,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             this.eventCb({
               data: { error: e },
               source: this.name,
-              sourceId: this.id,
+              runId: this.id,
               sourceNode: '',
               type: 'dag:error',
               meta: this.chronicleOptions?.defaults?.metadata,
@@ -158,7 +159,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         this.eventCb({
           data: { output: e.output },
           source: this.name,
-          sourceId: this.id,
+          runId: this.id,
           sourceNode: '',
           step: this.step,
           type: 'dag:finish',

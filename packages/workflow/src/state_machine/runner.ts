@@ -184,7 +184,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         },
         meta: this.chronicleOptions?.defaults?.metadata,
         source: this.name,
-        sourceId: this.id,
+        runId: this.id,
         sourceNode: '',
         step: this.machineStep,
       });
@@ -234,7 +234,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             data: e.data || null,
             meta: chronicleOptions.defaults.metadata,
             source: this.name,
-            sourceId: this.id,
+            runId: this.id,
             sourceNode: this.currentState.state,
             step: this.eventStep,
           });
@@ -249,7 +249,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           this.setStatus('running');
           this.eventCb({
             type: 'state_machine:node_start',
-            sourceId: this.id,
+            runId: this.id,
             source: this.name,
             step: this.eventStep,
             sourceNode: this.currentState.state,
@@ -285,7 +285,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
           this.eventCb({
             type: 'state_machine:node_finish',
-            sourceId: this.id,
+            runId: this.id,
             source: this.name,
             step: this.eventStep,
             sourceNode: this.currentState.state,
@@ -378,7 +378,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
     this.eventCb({
       type: 'state_machine:status',
-      sourceId: this.id,
+      runId: this.id,
       source: this.name,
       step: this.eventStep,
       sourceNode: this.currentState.state,
@@ -476,7 +476,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         },
         final: nextNode.final,
       },
-      sourceId: this.id,
+      runId: this.id,
       source: this.name,
       step: this.eventStep,
       sourceNode: this.currentState.state,

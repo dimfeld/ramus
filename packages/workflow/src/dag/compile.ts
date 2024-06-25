@@ -47,7 +47,7 @@ interface NamedDagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInpu
 }
 
 export interface BuildRunnerOptions<CONTEXT extends object, ROOTINPUT> {
-  dagId: string;
+  runId: string;
   context?: CONTEXT;
   input: ROOTINPUT;
   chronicle?: ChronicleClientOptions;
@@ -84,7 +84,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     eventCb,
     autorun,
     semaphores,
-    dagId,
+    runId,
     parentStep,
   }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
     let nodes = new Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>>();
@@ -94,7 +94,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     for (let node of this.namedNodes) {
       const runner = new DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>({
         name: node.name,
-        dagId,
+        runId,
         dagName: this.config.name,
         config: node,
         context,
@@ -119,7 +119,7 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     const outputNode = new DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>({
       name: '__output',
       dagName: this.config.name,
-      dagId,
+      runId,
       config: {
         parents: this.info.leafNodes,
         tolerateParentErrors: true,

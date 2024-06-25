@@ -31,7 +31,7 @@ export interface DagNodeRunnerOptions<
 > {
   name: string;
   dagName: string;
-  dagId: string;
+  runId: string;
   config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   /** External input passed when running the DAG */
@@ -58,7 +58,7 @@ export class DagNodeRunner<
 }> {
   name: string;
   dagName: string;
-  dagId: string;
+  runId: string;
   config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   state: DagNodeState;
@@ -81,7 +81,7 @@ export class DagNodeRunner<
   constructor({
     name,
     dagName,
-    dagId,
+    runId,
     config,
     context,
     rootInput,
@@ -94,7 +94,7 @@ export class DagNodeRunner<
   }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
-    this.dagId = dagId;
+    this.runId = runId;
     this.dagName = dagName;
     this.config = config;
     this.rootInput = rootInput;
@@ -135,7 +135,7 @@ export class DagNodeRunner<
     this.eventCb({
       type: 'dag:node_state',
       data: { state },
-      sourceId: this.dagId,
+      runId: this.runId,
       source: this.dagName,
       sourceNode: this.name,
       step: this.step!,
@@ -264,7 +264,7 @@ export class DagNodeRunner<
       this.eventCb({
         type: e.type,
         data: e.data,
-        sourceId: this.dagId,
+        runId: this.runId,
         source: this.name,
         step: this.step!,
         sourceNode: this.dagName,

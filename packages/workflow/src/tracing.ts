@@ -168,7 +168,7 @@ async function runNewStepInternal<T>(
         source: newContext.sourceName,
         sourceNode: name,
         step: newContext.currentStep ?? undefined,
-        sourceId: newContext.runId,
+        runId: newContext.runId,
         start_time: startTime,
         data: {
           input,
@@ -187,7 +187,7 @@ async function runNewStepInternal<T>(
         type: 'step:end',
         source: newContext.sourceName,
         sourceNode: name,
-        sourceId: newContext.runId,
+        runId: newContext.runId,
         step: newContext.currentStep ?? undefined,
         start_time: startTime,
         end_time: new Date(),
