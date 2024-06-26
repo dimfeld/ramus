@@ -7,7 +7,7 @@ import opentelemetry, {
 } from '@opentelemetry/api';
 import { NotifyArgs } from './types.js';
 import { uuidv7 } from 'uuidv7';
-import { WorkflowEvent, WorkflowEventArgument, WorkflowEventCallback } from './events.js';
+import { WorkflowEventArgument, WorkflowEventCallback } from './events.js';
 
 export const tracer = opentelemetry.trace.getTracer('ramus');
 
@@ -117,24 +117,28 @@ export function getEventContext(): EventContext {
   );
 }
 
-export interface RunWithEventContextOptions {
-  /** An existing run ID */
+/** Options for starting a new run. Many of these options are designed for use when
+ * restarting a previous run, as when a state machine was dormant and has received an
+ * event. */
+export interface RunOptions {
+  /** Restore context with this existing run ID */
   runId?: string;
-  sourceName?: string;
-  /** Use this parent step */
+  /** Restore context with this parent step ID */
   parentStep?: string | null;
-  /** Initialize with this step number instead of 0. */
+  /** Restore context with this current step ID */
   currentStep?: string;
+  /** A function that will receive events from the run */
   logEvent?: WorkflowEventCallback;
-  /** Create a new context, even if we're already in one. */
+  /** Create a new context, even if we're already in a run. If `forceNewContext` is omitted or `false`,
+   * the existing run will be used. */
   forceNewContext?: boolean;
 }
 
 /** Run a workflow and initialize an event context, if one does not already exist. */
-export function runWithEventContext<T>(options: RunWithEventContextOptions, fn: () => T): T {
+export function startRun<T>(options: RunOptions, fn: (ctx: EventContext) => T): T {
   let existingContext = options.forceNewContext ? undefined : asyncEventStorage.getStore();
   if (existingContext) {
-    return fn();
+    return fn(existingContext);
   } else {
     const origLogEvent = options.logEvent;
     const logEvent = origLogEvent
@@ -151,15 +155,16 @@ export function runWithEventContext<T>(options: RunWithEventContextOptions, fn: 
 
     let context = {
       runId: options.runId ?? uuidv7(),
-      sourceName: options.sourceName ?? '',
+      sourceName: '',
       parentStep: options.parentStep ?? null,
       currentStep: options.currentStep ?? null,
       logEvent,
+      // We're not in a step yet, so these don't do anything yet.
       recordStepInfo: () => {},
       getRecordedStepInfo: () => undefined,
     };
 
-    return asyncEventStorage.run(context, fn);
+    return asyncEventStorage.run(context, () => fn(context));
   }
 }
 

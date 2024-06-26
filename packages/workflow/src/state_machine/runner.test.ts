@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { StateMachineRunner } from './runner.js';
 import type { StateMachine } from './types.js';
 import { WorkflowEvent } from '../events.js';
-import { runWithEventContext } from '../tracing.js';
+import { startRun } from '../tracing.js';
 
 test('regular state machine', async () => {
   const config: StateMachine<{ value: number }, number> = {
@@ -41,7 +41,7 @@ test('regular state machine', async () => {
 
   const events: WorkflowEvent[] = [];
 
-  await runWithEventContext(
+  await startRun(
     {
       runId: 'the_run_id',
       currentStep: 'abc',

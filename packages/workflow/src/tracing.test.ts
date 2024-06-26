@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { asStep, getEventContext, recordStepInfo, runWithEventContext } from './tracing';
+import { asStep, recordStepInfo, startRun } from './tracing';
 import { WorkflowEvent } from './events';
 import { uuidv7 } from 'uuidv7';
 
@@ -39,7 +39,7 @@ test('steps', async () => {
   const events: WorkflowEvent[] = [];
 
   let runId = uuidv7();
-  let result = await runWithEventContext(
+  let result = await startRun(
     {
       runId,
       logEvent: (e) => events.push(e),

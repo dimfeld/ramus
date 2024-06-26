@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import { DagRunner, runDag } from './runner.js';
 import { Dag, DagConfiguration } from './types.js';
 import { WorkflowEvent } from '../events.js';
-import { runWithEventContext } from '../tracing.js';
+import { startRun } from '../tracing.js';
 
 interface Context {
   ctxValue: number;
@@ -46,7 +46,7 @@ test('simple DAG', async () => {
 
   const { eventCb, events } = eventCatcher();
 
-  await runWithEventContext(
+  await startRun(
     {
       logEvent: eventCb,
       runId: 'the_run_id',
@@ -115,7 +115,7 @@ test('running from parent context', async () => {
     nodes,
   };
 
-  let result = await runWithEventContext(
+  let result = await startRun(
     {
       parentStep: 'abc',
       currentStep: 'def',
