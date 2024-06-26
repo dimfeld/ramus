@@ -180,6 +180,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         data: {
           parent_step: getEventContext().currentStep,
           span_id: stepSpanId(opentelemetry.trace.getActiveSpan()),
+          tags: this.config.tags,
           input: this.rootInput,
         },
         meta: this.chronicleOptions?.defaults?.metadata,
@@ -198,6 +199,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         // we emitted our own event above
         skipLogging: true,
         newSourceName: this.name,
+        tags: this.config.nodes[this.currentState.state].tags,
         spanOptions: {
           attributes: {
             machine: this.name,

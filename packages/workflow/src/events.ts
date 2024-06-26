@@ -20,9 +20,9 @@ export interface WorkflowEventBase<TYPE extends string, DATA> {
 
 export interface StepStartData {
   parent_step: string | null;
-  step_type: string;
   span_id: string | null;
-  info: object | undefined;
+  tags?: string[];
+  info?: object;
   input: unknown;
 }
 

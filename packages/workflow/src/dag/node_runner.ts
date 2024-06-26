@@ -286,7 +286,6 @@ export class DagNodeRunner<
           parentSpan: parentContext,
           skipLogging: true,
           newSourceName: this.name,
-          type: 'dag:node',
         },
         async (span) => {
           if (semaphoreKey && this.semaphores?.length) {
@@ -302,7 +301,12 @@ export class DagNodeRunner<
           try {
             notify({
               type: 'dag:node_start',
-              data: { input: this.inputs, parent_step: this.parentStep, span_id: stepSpanId(span) },
+              data: {
+                input: this.inputs,
+                parent_step: this.parentStep,
+                span_id: stepSpanId(span),
+                tags: this.config.tags,
+              },
             });
             if (this.config.parents) {
               span.setAttribute('dag.node.parents', this.config.parents.join(', '));

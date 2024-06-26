@@ -7,13 +7,13 @@ import opentelemetry, {
 } from '@opentelemetry/api';
 import { NotifyArgs } from './types.js';
 import { uuidv7 } from 'uuidv7';
-import { WorkflowEvent, WorkflowEventCallback } from './events.js';
+import { WorkflowEventCallback } from './events.js';
 
 export const tracer = opentelemetry.trace.getTracer('ramus');
 
 export interface StepOptions {
   name: string;
-  type?: string;
+  tags?: string[];
   info?: object;
   spanOptions?: SpanOptions;
   /** Override the parent step */
@@ -151,7 +151,7 @@ async function runNewStepInternal<T>(
   span: Span,
   fn: (ctx: EventContext) => Promise<T>
 ): Promise<T> {
-  const { skipLogging, name, type, info, newSourceName, parentStep, input } = options;
+  const { skipLogging, name, tags, info, newSourceName, parentStep, input } = options;
   let oldContext = getEventContext();
   let newContext: EventContext = {
     ...oldContext,
@@ -172,7 +172,7 @@ async function runNewStepInternal<T>(
         start_time: startTime,
         data: {
           input,
-          step_type: type ?? 'step',
+          tags,
           info: info,
           parent_step: newContext.parentStep,
           span_id: stepSpanId(span),
@@ -207,7 +207,7 @@ export function stepSpanId(span: Span | undefined) {
 
 export interface AsStepOptions {
   name?: string;
-  type?: string;
+  tags?: string[];
   info?: object;
 }
 
@@ -229,13 +229,13 @@ export function asStep<P extends unknown[] = unknown[], RET = unknown>(
     );
   }
 
-  const type = options?.type;
+  const tags = options?.tags;
   const info = options?.info;
   return (...args: P) =>
     runStep(
       {
         name,
-        type,
+        tags,
         info,
         input: args.length > 1 ? args : args[0],
       },

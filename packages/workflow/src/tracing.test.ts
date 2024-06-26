@@ -18,6 +18,7 @@ test('steps', async () => {
     {
       name: 'call_step_3',
       info: { style: 'slow' },
+      tags: ['abc'],
     }
   );
 
@@ -49,21 +50,19 @@ test('steps', async () => {
   // step1
   expect(events[0]?.type).toEqual('step:start');
   expect(events[0].runId).toEqual(runId);
-  expect(events[0].data.step_type).toEqual('step');
   expect(events[0].sourceNode).toEqual('step1');
   expect(events[0].data.input).toEqual([1, 2]);
 
   expect(events[1]?.type).toEqual('step:start');
   expect(events[1].runId).toEqual(runId);
-  expect(events[1].data.step_type).toEqual('step');
   expect(events[1].sourceNode).toEqual('call_step_3');
+  expect(events[1].data.tags).toEqual(['abc']);
   expect(events[1].data.input).toEqual(3);
   expect(events[1].data.info).toEqual({ style: 'slow' });
   expect(events[1].data.parent_step).toEqual(events[0].step);
 
   expect(events[2]?.type).toEqual('step:start');
   expect(events[2].runId).toEqual(runId);
-  expect(events[2].data.step_type).toEqual('sleepy');
   expect(events[2].sourceNode).toEqual('step3');
   expect(events[2].data.input).toEqual(1);
   expect(events[2].data.parent_step).toEqual(events[1].step);
@@ -76,7 +75,6 @@ test('steps', async () => {
 
   expect(events[4]?.type).toEqual('step:start');
   expect(events[4].runId).toEqual(runId);
-  expect(events[4].data.step_type).toEqual('sleepy');
   expect(events[4].sourceNode).toEqual('step3');
   expect(events[4].data.input).toEqual(2);
   expect(events[4].data.parent_step).toEqual(events[1].step);

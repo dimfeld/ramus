@@ -26,6 +26,8 @@ export interface DagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyIn
   /** If true, run this node even if one of its parents has an error. */
   tolerateParentErrors?: boolean;
 
+  tags?: string[];
+
   run: (input: DagNodeInput<CONTEXT, ROOTINPUT, INPUTS>) => OUTPUT | Promise<OUTPUT>;
 }
 
@@ -40,6 +42,7 @@ export interface Dag<CONTEXT extends object, INPUT> {
   /** If true, keep running whatever we can when a node fails.
   When false or omitted, the entire DAG will end with an error if any node fails. */
   tolerateFailures?: boolean;
+  tags?: string[];
   nodes: DagConfiguration<CONTEXT, INPUT>;
 }
 

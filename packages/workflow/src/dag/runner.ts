@@ -42,6 +42,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 {
   id: string;
   name: string;
+  tags?: string[];
   context?: CONTEXT;
   runners: Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, any>>;
   outputNode: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>;
@@ -97,6 +98,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     });
 
     this.name = name ? `${name}: ${dag.config.name}` : dag.config.name;
+    this.tags = dag.config.tags;
     this.tolerateFailures = dag.config.tolerateFailures ?? false;
     this.runners = runners;
     this.outputNode = outputNode;
@@ -123,7 +125,12 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     return runInSpan(`DAG ${this.name}`, {}, async (span) => {
       this.eventCb({
         type: 'dag:start',
-        data: { input: this.input, parent_step: this.parentStep, span_id: stepSpanId(span) },
+        data: {
+          input: this.input,
+          parent_step: this.parentStep,
+          span_id: stepSpanId(span),
+          tags: this.tags,
+        },
         step: this.step,
         runId: this.id,
         source: this.name,
