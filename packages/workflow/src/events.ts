@@ -130,4 +130,8 @@ export function isFrameworkEvent(event: WorkflowEvent): event is FrameworkWorkfl
   return frameworkEvents.has(event.type);
 }
 
-export type WorkflowEventCallback = (event: WorkflowEventArgument) => any;
+/** The callback that can be registered with the framework to receive events. */
+export type WorkflowEventCallback = (event: WorkflowEvent) => any;
+/** The internal version of the event callback, which doesn't require certain arguments
+ * which can be read from the event context. */
+export type InternalWorkflowEventCallback = (event: WorkflowEventArgument) => any;

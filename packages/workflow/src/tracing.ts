@@ -7,7 +7,12 @@ import opentelemetry, {
 } from '@opentelemetry/api';
 import { NotifyArgs } from './types.js';
 import { uuidv7 } from 'uuidv7';
-import { WorkflowEventArgument, WorkflowEventCallback } from './events.js';
+import {
+  InternalWorkflowEventCallback,
+  WorkflowEvent,
+  WorkflowEventArgument,
+  WorkflowEventCallback,
+} from './events.js';
 
 export const tracer = opentelemetry.trace.getTracer('ramus');
 
@@ -99,7 +104,7 @@ export interface EventContext {
   sourceName: string;
   parentStep: string | null;
   currentStep: string | null;
-  logEvent: WorkflowEventCallback;
+  logEvent: InternalWorkflowEventCallback;
   recordStepInfo?: (o: object) => void;
   getRecordedStepInfo: () => object | undefined;
 }
@@ -149,7 +154,7 @@ export function startRun<T>(options: RunOptions, fn: (ctx: EventContext) => T): 
             e.step ||= eventContext.currentStep ?? undefined;
           }
 
-          origLogEvent(e);
+          origLogEvent(e as WorkflowEvent);
         }
       : () => {};
 
