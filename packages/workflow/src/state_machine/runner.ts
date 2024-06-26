@@ -211,7 +211,8 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         },
       },
       async (span) => {
-        this.eventStep = getEventContext().currentStep!;
+        const eventContext = getEventContext();
+        this.eventStep = eventContext.currentStep!;
         let config = this.config.nodes[this.currentState.state];
 
         let chronicleOptions = {
@@ -257,6 +258,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             sourceNode: this.currentState.state,
             data: {
               input: this.currentState.input,
+              context: this.context,
               event: this.currentState.event,
               parent_step: this.machineStep,
               span_id: stepSpanId(span),
@@ -292,6 +294,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             step: this.eventStep,
             sourceNode: this.currentState.state,
             data: {
+              info: eventContext.getRecordedStepInfo(),
               output: this.currentState.output,
             },
           });

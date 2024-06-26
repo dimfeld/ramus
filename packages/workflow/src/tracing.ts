@@ -100,6 +100,8 @@ export interface EventContext {
   parentStep: string | null;
   currentStep: string | null;
   logEvent: WorkflowEventCallback;
+  recordStepInfo?: (o: object) => void;
+  getRecordedStepInfo: () => object | undefined;
 }
 
 export function getEventContext(): EventContext {
@@ -110,6 +112,7 @@ export function getEventContext(): EventContext {
       parentStep: null,
       currentStep: null,
       logEvent: () => {},
+      getRecordedStepInfo: () => undefined,
     }
   );
 }
@@ -139,6 +142,8 @@ export function runWithEventContext<T>(options: RunWithEventContextOptions, fn: 
       parentStep: options.parentStep ?? null,
       currentStep: options.currentStep ?? null,
       logEvent: options.logEvent ?? (() => {}),
+      recordStepInfo: () => {},
+      getRecordedStepInfo: () => undefined,
     };
 
     return asyncEventStorage.run(context, fn);
@@ -153,8 +158,19 @@ async function runNewStepInternal<T>(
 ): Promise<T> {
   const { skipLogging, name, tags, info, newSourceName, parentStep, input } = options;
   let oldContext = getEventContext();
+  let additionalInfo: object | undefined;
+  function recordStepInfo(o: object) {
+    additionalInfo = o;
+  }
+
+  function getRecordedStepInfo() {
+    return additionalInfo;
+  }
+
   let newContext: EventContext = {
     ...oldContext,
+    recordStepInfo: recordStepInfo,
+    getRecordedStepInfo,
     sourceName: newSourceName ?? oldContext.sourceName,
     parentStep: parentStep ?? oldContext.currentStep,
     currentStep: uuidv7(),
@@ -180,11 +196,28 @@ async function runNewStepInternal<T>(
       });
     }
 
-    const retVal = await fn(newContext);
+    try {
+      const retVal = await fn(newContext);
+      if (!skipLogging) {
+        newContext.logEvent({
+          type: 'step:end',
+          source: newContext.sourceName,
+          sourceNode: name,
+          runId: newContext.runId,
+          step: newContext.currentStep ?? undefined,
+          start_time: startTime,
+          end_time: new Date(),
+          data: {
+            info: additionalInfo,
+            output: retVal,
+          },
+        });
+      }
 
-    if (!skipLogging) {
+      return retVal;
+    } catch (e) {
       newContext.logEvent({
-        type: 'step:end',
+        type: 'step:error',
         source: newContext.sourceName,
         sourceNode: name,
         runId: newContext.runId,
@@ -192,12 +225,12 @@ async function runNewStepInternal<T>(
         start_time: startTime,
         end_time: new Date(),
         data: {
-          output: retVal,
+          info: additionalInfo,
+          output: e,
         },
       });
+      throw e;
     }
-
-    return retVal;
   });
 }
 
@@ -241,4 +274,9 @@ export function asStep<P extends unknown[] = unknown[], RET = unknown>(
       },
       () => fn(...args)
     );
+}
+
+/** Record additional information about a step that is only known after running it. */
+export function recordStepInfo(info: object) {
+  getEventContext()?.recordStepInfo?.(info);
 }

@@ -28,6 +28,7 @@ export interface StepStartData {
 
 export interface StepEndData {
   output: unknown;
+  info?: object;
 }
 
 export type DagStartEvent = WorkflowEventBase<'dag:start', StepStartData>;
@@ -35,7 +36,7 @@ export type DagErrorEvent = WorkflowEventBase<'dag:error', { error: Error }>;
 export type DagFinishEvent = WorkflowEventBase<'dag:finish', StepEndData>;
 export type DagNodeStartEvent = WorkflowEventBase<
   'dag:node_start',
-  StepStartData & { input: AnyInputs }
+  StepStartData & { input: AnyInputs; context: object }
 >;
 export type DagNodeFinishEvent = WorkflowEventBase<'dag:node_finish', StepEndData>;
 export type DagNodeErrorEvent = WorkflowEventBase<'dag:node_error', { error: Error }>;
@@ -44,6 +45,7 @@ export type DagNodeStateEvent = WorkflowEventBase<'dag:node_state', { state: Dag
 /** Starting a generic type of step implemented by the agent itself. */
 export type StepStartEvent = WorkflowEventBase<'step:start', StepStartData>;
 export type StepEndEvent = WorkflowEventBase<'step:end', StepEndData>;
+export type StepErrorEvent = WorkflowEventBase<'step:error', StepEndData>;
 
 export type StateMachineStartEvent = WorkflowEventBase<'state_machine:start', StepStartData>;
 export type StateMachineStatusEvent = WorkflowEventBase<
@@ -53,6 +55,7 @@ export type StateMachineStatusEvent = WorkflowEventBase<
 export type StateMachineNodeStartEvent = WorkflowEventBase<
   'state_machine:node_start',
   StepStartData & {
+    context: object;
     event?: {
       type: string;
       data: unknown;
@@ -93,7 +96,8 @@ export type FrameworkWorkflowEvent =
   | StateMachineNodeFinishEvent
   | StateMachineTransitionEvent
   | StepStartEvent
-  | StepEndEvent;
+  | StepEndEvent
+  | StepErrorEvent;
 
 /** Any workflow event, covering any event type */
 export type WorkflowEvent = WorkflowEventBase<string, unknown>;
@@ -113,6 +117,7 @@ const frameworkEvents = new Set([
   'state_machine:node_finish',
   'step:start',
   'step:end',
+  'step:error',
 ]);
 
 /** Return true if this event is emitted by the framework itself. If false, then this event is from

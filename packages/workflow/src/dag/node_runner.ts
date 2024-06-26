@@ -1,7 +1,14 @@
 import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
-import { addSpanEvent, runInSpan, runStep, stepSpanId, toSpanAttributeValue } from '../tracing.js';
+import {
+  addSpanEvent,
+  getEventContext,
+  runInSpan,
+  runStep,
+  stepSpanId,
+  toSpanAttributeValue,
+} from '../tracing.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { ChronicleClientOptions } from 'chronicle-proxy';
 import { WorkflowEventCallback } from '../events.js';
@@ -306,6 +313,7 @@ export class DagNodeRunner<
                 parent_step: this.parentStep,
                 span_id: stepSpanId(span),
                 tags: this.config.tags,
+                context: this.context,
               },
             });
             if (this.config.parents) {
@@ -357,7 +365,13 @@ export class DagNodeRunner<
             );
 
             if (this.state !== 'cancelled') {
-              notify({ type: 'dag:node_finish', data: { output } });
+              notify({
+                type: 'dag:node_finish',
+                data: {
+                  output,
+                  info: getEventContext().getRecordedStepInfo(),
+                },
+              });
               this.setState('finished');
               this.result = { type: 'success', output };
               this.emit('finish', { name: this.name, output });
