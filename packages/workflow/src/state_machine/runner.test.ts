@@ -43,6 +43,7 @@ test('regular state machine', async () => {
 
   await runWithEventContext(
     {
+      runId: 'the_run_id',
       currentStep: 'abc',
       parentStep: 'def',
       logEvent: (e) => events.push(e),
@@ -79,6 +80,10 @@ test('regular state machine', async () => {
 
   for (let event of nodeStartEvents) {
     expect(event.data.parent_step).toEqual(startEvent.step);
+  }
+
+  for (let event of events) {
+    expect(event.runId).toEqual('the_run_id');
   }
 });
 

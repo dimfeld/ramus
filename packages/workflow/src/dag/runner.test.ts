@@ -46,15 +46,23 @@ test('simple DAG', async () => {
 
   const { eventCb, events } = eventCatcher();
 
-  const dag: Dag<Context, number> = {
-    name: 'test',
-    context: () => ({ ctxValue: 10 }),
-    nodes,
-  };
+  await runWithEventContext(
+    {
+      logEvent: eventCb,
+      runId: 'the_run_id',
+    },
+    async () => {
+      const dag: Dag<Context, number> = {
+        name: 'test',
+        context: () => ({ ctxValue: 10 }),
+        nodes,
+      };
 
-  let result = await runDag({ dag, input: 10, context: { ctxValue: 5 }, eventCb });
-  // 2 * ((5 + 1) + 1) + 10
-  expect(result).toEqual(24);
+      let result = await runDag({ dag, input: 10, context: { ctxValue: 5 }, eventCb });
+      // 2 * ((5 + 1) + 1) + 10
+      expect(result).toEqual(24);
+    }
+  );
 
   const startEvent = events[0];
   expect(startEvent.type).toEqual('dag:start');
@@ -65,6 +73,10 @@ test('simple DAG', async () => {
 
   for (let event of nodeStartEvents) {
     expect(event.data.parent_step).toEqual(startEvent.step);
+  }
+
+  for (let event of events) {
+    expect(event.runId).toEqual('the_run_id');
   }
 });
 

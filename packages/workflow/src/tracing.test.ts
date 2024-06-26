@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { asStep, getEventContext, runWithEventContext } from './tracing';
+import { asStep, getEventContext, recordStepInfo, runWithEventContext } from './tracing';
 import { WorkflowEvent } from './events';
 import { uuidv7 } from 'uuidv7';
 
@@ -25,10 +25,14 @@ test('steps', async () => {
   const step3 = asStep(
     async function step3(value: number) {
       await Bun.sleep(20);
+      recordStepInfo({ reason: 'none' });
       return value;
     },
     {
-      type: 'sleepy',
+      tags: ['sleepy'],
+      info: {
+        flavor: 'sweet',
+      },
     }
   );
 
@@ -65,23 +69,29 @@ test('steps', async () => {
   expect(events[2].runId).toEqual(runId);
   expect(events[2].sourceNode).toEqual('step3');
   expect(events[2].data.input).toEqual(1);
+  expect(events[2].data.tags).toEqual(['sleepy']);
+  expect(events[2].data.info).toEqual({ flavor: 'sweet' });
   expect(events[2].data.parent_step).toEqual(events[1].step);
 
   expect(events[3]?.type).toEqual('step:end');
   expect(events[3].runId).toEqual(runId);
   expect(events[3].step).toEqual(events[2].step);
+  expect(events[3].data.info).toEqual({ reason: 'none' });
   expect(events[3].sourceNode).toEqual('step3');
   expect(events[3].data.output).toEqual(1);
 
   expect(events[4]?.type).toEqual('step:start');
   expect(events[4].runId).toEqual(runId);
   expect(events[4].sourceNode).toEqual('step3');
+  expect(events[4].data.tags).toEqual(['sleepy']);
+  expect(events[4].data.info).toEqual({ flavor: 'sweet' });
   expect(events[4].data.input).toEqual(2);
   expect(events[4].data.parent_step).toEqual(events[1].step);
 
   expect(events[5]?.type).toEqual('step:end');
   expect(events[5].runId).toEqual(runId);
   expect(events[5].step).toEqual(events[4].step);
+  expect(events[5].data.info).toEqual({ reason: 'none' });
   expect(events[5].sourceNode).toEqual('step3');
   expect(events[5].data.output).toEqual(2);
 });

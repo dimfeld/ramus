@@ -7,7 +7,7 @@ import opentelemetry, {
 } from '@opentelemetry/api';
 import { NotifyArgs } from './types.js';
 import { uuidv7 } from 'uuidv7';
-import { WorkflowEventCallback } from './events.js';
+import { WorkflowEvent, WorkflowEventArgument, WorkflowEventCallback } from './events.js';
 
 export const tracer = opentelemetry.trace.getTracer('ramus');
 
@@ -107,7 +107,7 @@ export interface EventContext {
 export function getEventContext(): EventContext {
   return (
     asyncEventStorage.getStore() ?? {
-      runId: uuidv7(),
+      runId: '',
       sourceName: '',
       parentStep: null,
       currentStep: null,
@@ -136,12 +136,25 @@ export function runWithEventContext<T>(options: RunWithEventContextOptions, fn: 
   if (existingContext) {
     return fn();
   } else {
+    const origLogEvent = options.logEvent;
+    const logEvent = origLogEvent
+      ? (e: WorkflowEventArgument) => {
+          if (!e.runId || !e.step) {
+            const eventContext = getEventContext();
+            e.runId ||= eventContext.runId;
+            e.step ||= eventContext.currentStep ?? undefined;
+          }
+
+          origLogEvent(e);
+        }
+      : () => {};
+
     let context = {
       runId: options.runId ?? uuidv7(),
       sourceName: options.sourceName ?? '',
       parentStep: options.parentStep ?? null,
       currentStep: options.currentStep ?? null,
-      logEvent: options.logEvent ?? (() => {}),
+      logEvent,
       recordStepInfo: () => {},
       getRecordedStepInfo: () => undefined,
     };
@@ -169,7 +182,7 @@ async function runNewStepInternal<T>(
 
   let newContext: EventContext = {
     ...oldContext,
-    recordStepInfo: recordStepInfo,
+    recordStepInfo,
     getRecordedStepInfo,
     sourceName: newSourceName ?? oldContext.sourceName,
     parentStep: parentStep ?? oldContext.currentStep,

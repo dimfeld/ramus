@@ -27,8 +27,6 @@ export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   config: StateMachine<CONTEXT, ROOTINPUT>;
   /** Override the name for this instance of the state machine. */
   name?: string;
-  // A UUID for the instance of the state machine. This will be autogenrated as a UUIDv7 if not provided.
-  id?: string;
   /** Start from a different initial state than the config indicates. */
   initial?: string;
   /** Use a different context than the default. */
@@ -64,7 +62,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     output?: unknown;
   };
 
-  id: string;
   name: string;
   rootInput: ROOTINPUT;
   context: CONTEXT;
@@ -89,7 +86,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     this.semaphores = options.semaphores;
     this.eventCb = options.eventCb ?? getEventContext().logEvent;
     this.name = options.name ? `${options.name}: ${options.config.name}` : options.config.name;
-    this.id = options.id || uuidv7();
 
     const initial = options.initial ?? options.config.initial;
     if (!this.config.nodes[initial]) {
@@ -175,17 +171,18 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     }
 
     if (this.machineStatus === 'initial') {
+      const eventContext = getEventContext();
       this.eventCb({
         type: 'state_machine:start',
         data: {
-          parent_step: getEventContext().currentStep,
+          parent_step: eventContext.currentStep,
           span_id: stepSpanId(opentelemetry.trace.getActiveSpan()),
           tags: this.config.tags,
           input: this.rootInput,
         },
         meta: this.chronicleOptions?.defaults?.metadata,
         source: this.name,
-        runId: this.id,
+        runId: eventContext.runId,
         sourceNode: '',
         step: this.machineStep,
       });
@@ -237,7 +234,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             data: e.data || null,
             meta: chronicleOptions.defaults.metadata,
             source: this.name,
-            runId: this.id,
+            runId: eventContext.runId,
             sourceNode: this.currentState.state,
             step: this.eventStep,
           });
@@ -252,7 +249,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           this.setStatus('running');
           this.eventCb({
             type: 'state_machine:node_start',
-            runId: this.id,
+            runId: eventContext.runId,
             source: this.name,
             step: this.eventStep,
             sourceNode: this.currentState.state,
@@ -284,12 +281,14 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
           if (config.run) {
             this.currentState.output = await config.run(nodeInput);
-            span.setAttribute('output', toSpanAttributeValue(this.currentState.output as object));
+            if (span.isRecording()) {
+              span.setAttribute('output', toSpanAttributeValue(this.currentState.output as object));
+            }
           }
 
           this.eventCb({
             type: 'state_machine:node_finish',
-            runId: this.id,
+            runId: eventContext.runId,
             source: this.name,
             step: this.eventStep,
             sourceNode: this.currentState.state,
@@ -383,7 +382,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
     this.eventCb({
       type: 'state_machine:status',
-      runId: this.id,
+      runId: getEventContext().runId,
       source: this.name,
       step: this.eventStep,
       sourceNode: this.currentState.state,
@@ -481,7 +480,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         },
         final: nextNode.final,
       },
-      runId: this.id,
+      runId: getEventContext().runId,
       source: this.name,
       step: this.eventStep,
       sourceNode: this.currentState.state,

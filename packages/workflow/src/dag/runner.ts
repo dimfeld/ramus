@@ -40,7 +40,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   extends EventEmitter<DagRunnerEvents<OUTPUT>>
   implements Runnable<OUTPUT, DagRunnerEvents<OUTPUT>>
 {
-  id: string;
+  runId: string;
   name: string;
   tags?: string[];
   context?: CONTEXT;
@@ -74,19 +74,19 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
       dag = new CompiledDag(dag);
     }
 
+    const eventContext = getEventContext();
     this.context = context;
     this.input = input;
-    this.id = uuidv7();
+    this.runId = eventContext.runId;
 
     this.chronicleOptions = chronicle;
-    const eventContext = getEventContext();
     this.eventCb = eventCb ?? eventContext.logEvent;
 
     this.step = uuidv7();
     this.parentStep = parentStep ?? eventContext.currentStep;
 
     const { runners, outputNode } = dag.buildRunners({
-      runId: this.id,
+      runId: this.runId,
       context,
       input,
       chronicle,
@@ -132,7 +132,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           tags: this.tags,
         },
         step: this.step,
-        runId: this.id,
+        runId: this.runId,
         source: this.name,
         sourceNode: '',
         meta: this.chronicleOptions?.defaults?.metadata,
@@ -144,7 +144,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             this.eventCb({
               data: { error: e },
               source: this.name,
-              runId: this.id,
+              runId: this.runId,
               sourceNode: '',
               type: 'dag:error',
               meta: this.chronicleOptions?.defaults?.metadata,
@@ -166,7 +166,7 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         this.eventCb({
           data: { output: e.output },
           source: this.name,
-          runId: this.id,
+          runId: this.runId,
           sourceNode: '',
           step: this.step,
           type: 'dag:finish',

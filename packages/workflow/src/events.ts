@@ -6,9 +6,10 @@ import { StateMachineStatus } from './state_machine/types.js';
 export interface WorkflowEventBase<TYPE extends string, DATA> {
   type: TYPE;
   data: DATA;
-  source: string;
-  /** A UUIDv7 for the source workflow */
+  /** A UUIDv7 for the entire run */
   runId: string;
+  /** The DAG or state machine that this event belongs to */
+  source: string;
   /** The node within the workflow that this event belongs to */
   sourceNode: string;
   /** A UUIDv7 identifying the step the event belongs to */
@@ -101,6 +102,9 @@ export type FrameworkWorkflowEvent =
 
 /** Any workflow event, covering any event type */
 export type WorkflowEvent = WorkflowEventBase<string, unknown>;
+/** A workflow event, with the runId and step made optional, since the event handler
+ * can fill these in. */
+export type WorkflowEventArgument = Omit<WorkflowEvent, 'runId'> & { runId?: string };
 
 const frameworkEvents = new Set([
   'dag:start',
@@ -126,4 +130,4 @@ export function isFrameworkEvent(event: WorkflowEvent): event is FrameworkWorkfl
   return frameworkEvents.has(event.type);
 }
 
-export type WorkflowEventCallback = (event: WorkflowEvent) => any;
+export type WorkflowEventCallback = (event: WorkflowEventArgument) => any;
