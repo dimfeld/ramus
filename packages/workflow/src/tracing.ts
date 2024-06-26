@@ -216,19 +216,21 @@ async function runNewStepInternal<T>(
 
       return retVal;
     } catch (e) {
-      newContext.logEvent({
-        type: 'step:error',
-        source: newContext.sourceName,
-        sourceNode: name,
-        runId: newContext.runId,
-        step: newContext.currentStep ?? undefined,
-        start_time: startTime,
-        end_time: new Date(),
-        data: {
-          info: additionalInfo,
-          output: e,
-        },
-      });
+      if (!skipLogging) {
+        newContext.logEvent({
+          type: 'step:error',
+          source: newContext.sourceName,
+          sourceNode: name,
+          runId: newContext.runId,
+          step: newContext.currentStep ?? undefined,
+          start_time: startTime,
+          end_time: new Date(),
+          data: {
+            info: additionalInfo,
+            output: e,
+          },
+        });
+      }
       throw e;
     }
   });
