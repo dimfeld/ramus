@@ -33,10 +33,10 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@dimfeld/chronicle": "file:../../../chronicle/js-client",
     "@extractus/article-extractor": "^8.0.10",
     "@mozilla/readability": "^0.5.0",
     "@opentelemetry/api": "^1.8.0",
-    "chronicle-proxy": "file:../../../chronicle/js-client",
     "jsdom": "^24.0.0",
     "ky": "^1.2.4",
     "wtf-plugin-disambig": "^1.0.0",

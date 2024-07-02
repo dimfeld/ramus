@@ -1,6 +1,6 @@
 import { AnyInputs, Dag, DagNode } from './types.js';
 import { DagNodeRunner } from './node_runner.js';
-import { ChronicleClientOptions } from 'chronicle-proxy';
+import { ChronicleClientOptions, RunContext } from '@dimfeld/chronicle';
 import { WorkflowEventCallback } from '../events.js';
 import type { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
@@ -47,15 +47,11 @@ interface NamedDagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyInpu
 }
 
 export interface BuildRunnerOptions<CONTEXT extends object, ROOTINPUT> {
-  runId: string;
   context?: CONTEXT;
   input: ROOTINPUT;
-  chronicle?: ChronicleClientOptions;
-  eventCb: WorkflowEventCallback;
   cache?: NodeResultCache;
   semaphores?: Semaphore[];
   autorun?: () => boolean;
-  parentStep: string;
 }
 
 export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
@@ -79,13 +75,9 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
   buildRunners({
     context,
     input,
-    chronicle,
     cache,
-    eventCb,
     autorun,
     semaphores,
-    runId,
-    parentStep,
   }: BuildRunnerOptions<CONTEXT, ROOTINPUT>) {
     let nodes = new Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>>();
 
@@ -94,17 +86,13 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     for (let node of this.namedNodes) {
       const runner = new DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, unknown>({
         name: node.name,
-        runId,
         dagName: this.config.name,
         config: node,
         context,
         rootInput: input,
-        chronicle,
-        eventCb,
         cache,
         autorun,
         semaphores,
-        parentStep,
       });
       nodes.set(node.name, runner);
     }
@@ -119,7 +107,6 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
     const outputNode = new DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>({
       name: '__output',
       dagName: this.config.name,
-      runId,
       config: {
         parents: this.info.leafNodes,
         tolerateParentErrors: true,
@@ -136,9 +123,6 @@ export class CompiledDag<CONTEXT extends object, ROOTINPUT, OUTPUT> {
       },
       rootInput: input,
       context,
-      chronicle,
-      eventCb,
-      parentStep,
     });
 
     outputNode.init(leafRunners);

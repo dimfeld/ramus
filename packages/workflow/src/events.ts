@@ -1,4 +1,4 @@
-import type { ChronicleRequestMetadata } from 'chronicle-proxy';
+import type { ChronicleRequestMetadata } from '@dimfeld/chronicle';
 import { AnyInputs, DagNodeState } from './dag/types.js';
 import { StateMachineStatus } from './state_machine/types.js';
 

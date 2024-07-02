@@ -1,10 +1,10 @@
 import { EventEmitter } from 'events';
-import { ChronicleClientOptions } from 'chronicle-proxy';
+import { ChronicleClientOptions, RunContext, runStep } from '@dimfeld/chronicle';
 import { WorkflowEventCallback } from '../events.js';
 import type { AnyInputs, Dag, DagNodeState } from './types.js';
 import { CompiledDag } from './compile.js';
 import { DagNodeRunner } from './node_runner.js';
-import { getEventContext, runInSpan, stepSpanId } from '../tracing.js';
+import { getEventContext } from '@dimfeld/chronicle';
 import { NodeResultCache } from '../cache.js';
 import { Semaphore } from '../semaphore.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
@@ -40,20 +40,15 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   extends EventEmitter<DagRunnerEvents<OUTPUT>>
   implements Runnable<OUTPUT, DagRunnerEvents<OUTPUT>>
 {
-  runId: string;
   name: string;
   tags?: string[];
   context?: CONTEXT;
   runners: Map<string, DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, any>>;
   outputNode: DagNodeRunner<CONTEXT, ROOTINPUT, AnyInputs, OUTPUT>;
   tolerateFailures: boolean;
-  chronicleOptions?: ChronicleClientOptions;
-  eventCb: WorkflowEventCallback;
   autorun: () => boolean;
   input: ROOTINPUT;
   output: OUTPUT | undefined;
-  step: string;
-  parentStep: string | null;
   /* A promise which resolves when the entire DAG finishes or rejects on an error. */
   _finished: Promise<OUTPUT> | undefined;
 
@@ -62,46 +57,32 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     dag,
     context,
     input,
-    chronicle,
-    eventCb,
     cache,
     autorun,
     semaphores,
-    parentStep,
   }: DagRunnerOptions<CONTEXT, ROOTINPUT, OUTPUT>) {
     super();
     if (!(dag instanceof CompiledDag)) {
       dag = new CompiledDag(dag);
     }
 
-    const eventContext = getEventContext();
     this.context = context;
     this.input = input;
-    this.runId = eventContext.runId;
-
-    this.chronicleOptions = chronicle;
-    this.eventCb = eventCb ?? eventContext.logEvent;
-
-    this.step = uuidv7();
-    this.parentStep = parentStep ?? eventContext.currentStep;
 
     const { runners, outputNode } = dag.buildRunners({
-      runId: this.runId,
-      context,
-      input,
-      chronicle,
-      eventCb: this.eventCb,
+      context: this.context,
+      input: this.input,
       cache,
       autorun,
       semaphores,
-      parentStep: this.step,
     });
+
+    this.runners = runners;
+    this.outputNode = outputNode;
 
     this.name = name ? `${name}: ${dag.config.name}` : dag.config.name;
     this.tags = dag.config.tags;
     this.tolerateFailures = dag.config.tolerateFailures ?? false;
-    this.runners = runners;
-    this.outputNode = outputNode;
     this.autorun = autorun ?? (() => true);
   }
 
@@ -121,70 +102,54 @@ export class DagRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   }
 
   /** Run the entire DAG to completion */
-  run(): Promise<void> {
-    return runInSpan(`DAG ${this.name}`, {}, async (span) => {
-      this.eventCb({
-        type: 'dag:start',
-        data: {
-          input: this.input,
-          parent_step: this.parentStep,
-          span_id: stepSpanId(span),
-          tags: this.tags,
-        },
-        step: this.step,
-        runId: this.runId,
-        source: this.name,
-        sourceNode: '',
-        meta: this.chronicleOptions?.defaults?.metadata,
-      });
-
-      for (let runner of this.runners.values()) {
-        if (!this.tolerateFailures) {
-          runner.on('ramus:error', (e) => {
-            this.eventCb({
-              data: { error: e },
-              source: this.name,
-              runId: this.runId,
-              sourceNode: '',
-              type: 'dag:error',
-              meta: this.chronicleOptions?.defaults?.metadata,
-            });
-            // Make sure to emit error before we cancel, so that anything listening to both will know about the
-            // error first.
-            this.emit('ramus:error', e);
-            this.cancel(false);
-          });
-        }
-      }
-
-      this.outputNode.on('ramus:error', (e) => {
-        this.cancel(false);
-        this.emit('ramus:error', e);
-      });
-
-      this.outputNode.on('finish', (e) => {
-        this.eventCb({
-          data: { output: e.output },
-          source: this.name,
-          runId: this.runId,
-          sourceNode: '',
-          step: this.step,
-          type: 'dag:finish',
-          meta: this.chronicleOptions?.defaults?.metadata,
-        });
-
-        this.output = e.output;
-        this.emit('finish', e.output);
-      });
-
-      if (this.autorun()) {
+  run(): Promise<unknown> {
+    return runStep(
+      {
+        name: this.name,
+        type: 'dag',
+        input: this.input,
+      },
+      async (eventContext) => {
         for (let runner of this.runners.values()) {
-          if (runner.readyToResume()) {
-            runner.run();
+          runner.setRunContext(eventContext);
+          if (!this.tolerateFailures) {
+            runner.on('ramus:error', (e) => {
+              // Make sure to emit error before we cancel, so that anything listening to both will know about the
+              // error first.
+              this.emit('ramus:error', e);
+              this.cancel(false);
+            });
           }
         }
+
+        this.outputNode.setRunContext(eventContext);
+
+        const result = Promise.withResolvers();
+
+        // TODO this and finish should reject or resolve a promise
+        this.outputNode.on('ramus:error', (e) => {
+          this.cancel(false);
+          this.emit('ramus:error', e);
+          result.reject(e);
+        });
+
+        this.outputNode.on('finish', (e) => {
+          this.output = e.output;
+          this.emit('finish', e.output);
+          result.resolve(e);
+        });
+
+        if (this.autorun()) {
+          for (let runner of this.runners.values()) {
+            if (runner.readyToResume()) {
+              runner.run();
+            }
+          }
+        }
+
+        return result.promise;
       }
-    });
+    );
   }
 
   cancel(emit = true) {

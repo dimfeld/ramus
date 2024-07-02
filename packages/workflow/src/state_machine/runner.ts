@@ -1,5 +1,5 @@
 import * as opentelemetry from '@opentelemetry/api';
-import { ChronicleClientOptions } from 'chronicle-proxy';
+import { ChronicleClientOptions } from '@dimfeld/chronicle';
 import { EventEmitter } from 'events';
 import { uuidv7 } from 'uuidv7';
 import { CancelledError } from '../errors.js';
