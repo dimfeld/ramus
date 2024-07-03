@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { StateMachineRunner } from './runner.js';
 import type { StateMachine } from './types.js';
 import { WorkflowEvent } from '../events.js';
-import { startRun } from '../tracing.js';
+import { startRun } from '@dimfeld/chronicle';
 
 test('regular state machine', async () => {
   const config: StateMachine<{ value: number }, number> = {
@@ -43,10 +43,8 @@ test('regular state machine', async () => {
 
   await startRun(
     {
-      runId: 'the_run_id',
-      currentStep: 'abc',
-      parentStep: 'def',
-      logEvent: (e) => events.push(e),
+      application: 'ramus-workflow-test',
+      environment: 'test',
     },
     async () => {
       const machine = new StateMachineRunner({

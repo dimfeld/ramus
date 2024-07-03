@@ -1,19 +1,10 @@
 import * as opentelemetry from '@opentelemetry/api';
-import { ChronicleClientOptions } from '@dimfeld/chronicle';
+import { runStep, toSpanAttributeValue } from '@dimfeld/chronicle';
 import { EventEmitter } from 'events';
-import { uuidv7 } from 'uuidv7';
 import { CancelledError } from '../errors.js';
 import { WorkflowEventCallback } from '../events.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
 import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js';
-import {
-  addSpanEvent,
-  getEventContext,
-  runInSpanWithParent,
-  runStep,
-  stepSpanId,
-  toSpanAttributeValue,
-} from '../tracing.js';
 import {
   StateMachine,
   StateMachineNodeInput,
@@ -21,7 +12,6 @@ import {
   StateMachineStatus,
   TransitionGuardInput,
 } from './types.js';
-import { NotifyArgs } from '../types.js';
 
 export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   config: StateMachine<CONTEXT, ROOTINPUT>;
@@ -34,8 +24,6 @@ export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   /** Semaphores which can be used to rate limit operations by the DAG. This accepts multiple Semaphores, which
    * can be used to provide a semaphore for global operations and another one for this particular DAG, for example. */
   semaphores?: Semaphore[];
-  /** Options for a Chronicle LLM proxy client */
-  chronicle?: ChronicleClientOptions;
   /** A function that can take events from the running state machine. This will use
    * the configured event callback from the event context, if omitted.*/
   eventCb?: WorkflowEventCallback;
@@ -66,8 +54,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   rootInput: ROOTINPUT;
   context: CONTEXT;
   config: StateMachine<CONTEXT, ROOTINPUT>;
-  chronicleOptions?: ChronicleClientOptions;
-  eventCb: WorkflowEventCallback;
   semaphores?: Semaphore[];
   parentSpanContext?: opentelemetry.Context;
   stepIndex = 0;
@@ -82,9 +68,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     this.config = options.config;
     this.context = options.context ?? this.config.context();
     this.rootInput = options.input;
-    this.chronicleOptions = options.chronicle;
     this.semaphores = options.semaphores;
-    this.eventCb = options.eventCb ?? getEventContext().logEvent;
     this.name = options.name ? `${options.name}: ${options.config.name}` : options.config.name;
 
     const initial = options.initial ?? options.config.initial;
@@ -130,14 +114,24 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
       return;
     }
 
-    return await runInSpanWithParent(
-      `machine ${this.name}`,
-      {},
-      this.parentSpanContext,
+    return await runStep(
+      {
+        name: this.name,
+        type: 'state_machine',
+        input: this.rootInput,
+        tags: this.config.tags,
+        // TODO also get info from the config
+      },
       async () => {
         while (this.canStep()) {
-          let transitioned = await this.step();
-          if (this.machineStatus === 'error' && !transitioned) {
+          let lastState = this.currentState.state;
+          try {
+            await this.step();
+          } catch (e) {
+            // we handled the error already, but threw it up to here so that runStep would log it
+          }
+
+          if (this.machineStatus === 'error' && lastState === this.currentState.state) {
             // We hit an error but there is no error state, so halt for now. The state
             // machine can be manually retried.
             break;
@@ -166,80 +160,17 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   }
 
   step() {
-    if (this.machineStep === null) {
-      this.machineStep = uuidv7();
-    }
-
-    if (this.machineStatus === 'initial') {
-      const eventContext = getEventContext();
-      this.eventCb({
-        type: 'state_machine:start',
-        data: {
-          parent_step: eventContext.currentStep,
-          span_id: stepSpanId(opentelemetry.trace.getActiveSpan()),
-          tags: this.config.tags,
-          input: this.rootInput,
-        },
-        meta: this.chronicleOptions?.defaults?.metadata,
-        source: this.name,
-        runId: eventContext.runId,
-        sourceNode: '',
-        step: this.machineStep,
-      });
-    }
-
     this.stepIndex += 1;
     return runStep(
       {
-        name: `machine ${this.name} ${this.currentState}`,
-        parentStep: this.machineStep,
-        // we emitted our own event above
-        skipLogging: true,
-        newSourceName: this.name,
+        name: `${this.name} ${this.currentState}`,
+        type: 'state_machine:node',
+        input: this.currentState,
         tags: this.config.nodes[this.currentState.state].tags,
-        spanOptions: {
-          attributes: {
-            machine: this.name,
-            step: this.currentState.state,
-            step_index: this.stepIndex,
-            input: toSpanAttributeValue(this.currentState.input),
-            context: toSpanAttributeValue(this.context),
-          },
-        },
+        // TODO also get info from the node
       },
-      async (span) => {
-        const eventContext = getEventContext();
-        this.eventStep = eventContext.currentStep!;
+      async (ctx, span) => {
         let config = this.config.nodes[this.currentState.state];
-
-        let chronicleOptions = {
-          ...this.chronicleOptions,
-          defaults: {
-            ...this.chronicleOptions?.defaults,
-            metadata: {
-              ...this.chronicleOptions?.defaults?.metadata,
-              step_index: this.stepIndex,
-              step: this.eventStep,
-            },
-          },
-        };
-
-        const notify = (e: NotifyArgs, spanEvent = true) => {
-          if (spanEvent) {
-            addSpanEvent(span, e);
-          }
-
-          this.eventCb({
-            ...e,
-            data: e.data || null,
-            meta: chronicleOptions.defaults.metadata,
-            source: this.name,
-            runId: eventContext.runId,
-            sourceNode: this.currentState.state,
-            step: this.eventStep,
-          });
-        };
-
         let semRelease: SemaphoreReleaser | undefined;
         try {
           if (this.semaphores?.length && config.semaphoreKey) {
@@ -247,24 +178,9 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             semRelease = await acquireSemaphores(this.semaphores, config.semaphoreKey);
           }
           this.setStatus('running');
-          this.eventCb({
-            type: 'state_machine:node_start',
-            runId: eventContext.runId,
-            source: this.name,
-            step: this.eventStep,
-            sourceNode: this.currentState.state,
-            data: {
-              input: this.currentState.input,
-              context: this.context,
-              event: this.currentState.event,
-              parent_step: this.machineStep,
-              span_id: stepSpanId(span),
-            },
-          });
 
           let nodeInput: StateMachineNodeInput<CONTEXT, ROOTINPUT, any> = {
             context: this.context,
-            notify,
             isCancelled: () => this.machineStatus === 'cancelled',
             exitIfCancelled: () => {
               if (this.machineStatus === 'cancelled') {
@@ -276,7 +192,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             event: this.currentState.event,
             rootInput: this.rootInput,
             span,
-            chronicleOptions,
           };
 
           if (config.run) {
@@ -285,18 +200,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
               span.setAttribute('output', toSpanAttributeValue(this.currentState.output as object));
             }
           }
-
-          this.eventCb({
-            type: 'state_machine:node_finish',
-            runId: eventContext.runId,
-            source: this.name,
-            step: this.eventStep,
-            sourceNode: this.currentState.state,
-            data: {
-              info: eventContext.getRecordedStepInfo(),
-              output: this.currentState.output,
-            },
-          });
 
           // If some events were queued up while running, then try applying them now.
           let transitioned = false;
@@ -349,22 +252,15 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
             return false;
           }
 
-          let err = e as Error;
-
           let errorState = config?.errorState ?? this.config.errorState;
           if (errorState) {
             this.transitionTo(errorState, e);
           }
 
           this.setStatus('error');
-          notify({ type: 'state_machine:error', data: { error: e } }, false);
-          this.emit('ramus:error', err);
 
-          span.recordException(err);
-          span.setStatus({ code: opentelemetry.SpanStatusCode.ERROR });
-          span.setAttribute('error', err.message ?? 'true');
-
-          return Boolean(errorState);
+          // throw so that runStep will log the error
+          throw e;
         } finally {
           semRelease?.();
         }
@@ -379,17 +275,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     }
 
     this.machineStatus = newStatus;
-
-    this.eventCb({
-      type: 'state_machine:status',
-      runId: getEventContext().runId,
-      source: this.name,
-      step: this.eventStep,
-      sourceNode: this.currentState.state,
-      data: {
-        status: newStatus,
-      },
-    });
 
     this.emit('state', {
       machineState: this.machineStatus,
@@ -466,26 +351,6 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   }
 
   private transitionTo(nextState: string, input: unknown, eventType?: string, eventData?: unknown) {
-    const nextNode = this.config.nodes[nextState];
-    this.eventCb({
-      type: 'state_machine:transition',
-      data: {
-        from: this.currentState.state,
-        to: nextState,
-        input: this.currentState.input,
-        output: this.currentState.output,
-        event: {
-          type: eventType,
-          data: eventData,
-        },
-        final: nextNode.final,
-      },
-      runId: getEventContext().runId,
-      source: this.name,
-      step: this.eventStep,
-      sourceNode: this.currentState.state,
-    });
-
     this.currentState = {
       previousState: this.currentState.state,
       event: eventType ? { type: eventType, data: eventData } : undefined,
