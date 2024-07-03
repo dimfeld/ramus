@@ -2,7 +2,6 @@ import * as opentelemetry from '@opentelemetry/api';
 import { runStep, toSpanAttributeValue } from '@dimfeld/chronicle';
 import { EventEmitter } from 'events';
 import { CancelledError } from '../errors.js';
-import { WorkflowEventCallback } from '../events.js';
 import { Runnable, RunnableEvents } from '../runnable.js';
 import { Semaphore, SemaphoreReleaser, acquireSemaphores } from '../semaphore.js';
 import {
@@ -24,10 +23,10 @@ export interface StateMachineRunnerOptions<CONTEXT extends object, ROOTINPUT> {
   /** Semaphores which can be used to rate limit operations by the DAG. This accepts multiple Semaphores, which
    * can be used to provide a semaphore for global operations and another one for this particular DAG, for example. */
   semaphores?: Semaphore[];
-  /** A function that can take events from the running state machine. This will use
-   * the configured event callback from the event context, if omitted.*/
-  eventCb?: WorkflowEventCallback;
   input: ROOTINPUT;
+
+  /** Additional info that will be merged with the info from the config and logged. */
+  info?: object;
 }
 
 type StateMachineRunnerEvents<OUTPUT> = {
@@ -56,11 +55,12 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
   config: StateMachine<CONTEXT, ROOTINPUT>;
   semaphores?: Semaphore[];
   parentSpanContext?: opentelemetry.Context;
+  info?: object;
   stepIndex = 0;
   eventStep: string | undefined;
   machineStep: string | null = null;
   eventQueue: StateMachineSendEventOptions[] = [];
-  _finished: Promise<OUTPUT> | undefined;
+  private _finished: Promise<OUTPUT> | undefined;
 
   constructor(options: StateMachineRunnerOptions<CONTEXT, ROOTINPUT>) {
     super();
@@ -68,6 +68,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     this.config = options.config;
     this.context = options.context ?? this.config.context();
     this.rootInput = options.input;
+    this.info = options.info;
     this.semaphores = options.semaphores;
     this.name = options.name ? `${options.name}: ${options.config.name}` : options.config.name;
 
@@ -90,12 +91,36 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
     return this.currentState.state;
   }
 
+  /** Wait for a state machine to reach a final state or to hit an error without an error state. */
   get finished() {
     if (!this._finished) {
       this._finished = new Promise((resolve, reject) => {
-        this.once('ramus:error', reject);
-        this.once('cancelled', () => reject(new Error('Cancelled')));
-        this.once('finish', resolve);
+        const handleError = (e: { error: Error; fatal: boolean }) => {
+          if (e.fatal) {
+            removeListeners();
+            reject(e.error);
+          }
+        };
+
+        const handleCancelled = () => {
+          removeListeners();
+          reject(new CancelledError());
+        };
+
+        const handleFinished = (output: OUTPUT) => {
+          removeListeners();
+          resolve(output);
+        };
+
+        const removeListeners = () => {
+          this.removeListener('ramus:error', handleError);
+          this.removeListener('cancelled', handleCancelled);
+          this.removeListener('finish', handleFinished);
+        };
+
+        this.on('ramus:error', handleError);
+        this.once('cancelled', handleCancelled);
+        this.once('finish', handleFinished);
       });
     }
 
@@ -120,7 +145,10 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
         type: 'state_machine',
         input: this.rootInput,
         tags: this.config.tags,
-        // TODO also get info from the config
+        info: {
+          ...this.config.info,
+          ...this.info,
+        },
       },
       async () => {
         while (this.canStep()) {
@@ -128,7 +156,10 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           try {
             await this.step();
           } catch (e) {
+            const fatal = lastState === this.currentState.state;
             // we handled the error already, but threw it up to here so that runStep would log it
+            // Nothing remaining to do here though.
+            this.emit('ramus:error', { error: e, fatal });
           }
 
           if (this.machineStatus === 'error' && lastState === this.currentState.state) {
@@ -161,16 +192,16 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
   step() {
     this.stepIndex += 1;
+    const config = this.config.nodes[this.currentState.state];
     return runStep(
       {
-        name: `${this.name} ${this.currentState}`,
+        name: `${this.name}: ${this.currentState.state}`,
         type: 'state_machine:node',
         input: this.currentState,
-        tags: this.config.nodes[this.currentState.state].tags,
-        // TODO also get info from the node
+        tags: config.tags,
+        info: config.info,
       },
       async (ctx, span) => {
-        let config = this.config.nodes[this.currentState.state];
         let semRelease: SemaphoreReleaser | undefined;
         try {
           if (this.semaphores?.length && config.semaphoreKey) {
@@ -289,6 +320,7 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
 
     if (this.config.nodes[this.currentState.state].final) {
       this.setStatus('final');
+      this.emit('finish', this.currentState.output);
     } else {
       this.setStatus('ready');
     }

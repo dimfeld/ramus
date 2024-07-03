@@ -1,7 +1,6 @@
 import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
-import { SpanStatusCode } from '@opentelemetry/api';
 import {
   ChronicleClientOptions,
   RunContext,
@@ -9,7 +8,6 @@ import {
   runInSpan,
   toSpanAttributeValue,
 } from '@dimfeld/chronicle';
-import { WorkflowEventCallback } from '../events.js';
 import { calculateCacheKey, type NodeResultCache } from '../cache.js';
 import { Semaphore, acquireSemaphores } from '../semaphore.js';
 import { CancelledError } from '../errors.js';
@@ -51,7 +49,7 @@ export class DagNodeRunner<
 > extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];
   finish: [{ name: string; output: OUTPUT }];
-  'ramus:error': [Error];
+  'ramus:error': [{ error: Error }];
   cancelled: [];
   parentError: [];
 }> {
@@ -110,7 +108,7 @@ export class DagNodeRunner<
         this.once('cancelled', () => {
           reject(new Error('Cancelled'));
         });
-        this.once('ramus:error', reject);
+        this.once('ramus:error', (e) => reject(e.error));
       });
     }
     return this._finished;
@@ -222,6 +220,7 @@ export class DagNodeRunner<
             context: this.context,
           },
           tags: this.config.tags,
+          info: this.config.info,
           parentRunContext: this.runContext,
           parentSpan: parentContext,
         },
@@ -290,7 +289,7 @@ export class DagNodeRunner<
               let err = e as Error;
               this.setState('error');
               this.result = { type: 'error', error: err };
-              this.emit('ramus:error', err);
+              this.emit('ramus:error', { error: err });
               throw e;
             }
           } finally {

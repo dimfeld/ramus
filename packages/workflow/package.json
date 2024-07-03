@@ -14,8 +14,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc && publint",
-    "dev": "tsc --watch --preserveWatchOutput"
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && publint",
+    "dev": "tsc --watch --preserveWatchOutput -p tsconfig.build.json"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",

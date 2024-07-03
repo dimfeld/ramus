@@ -28,6 +28,9 @@ export interface DagNode<CONTEXT extends object, ROOTINPUT, INPUTS extends AnyIn
 
   tags?: string[];
 
+  /** Extra info to log about this node */
+  info?: object;
+
   run: (input: DagNodeInput<CONTEXT, ROOTINPUT, INPUTS>) => OUTPUT | Promise<OUTPUT>;
 }
 
@@ -43,6 +46,8 @@ export interface Dag<CONTEXT extends object, INPUT> {
   When false or omitted, the entire DAG will end with an error if any node fails. */
   tolerateFailures?: boolean;
   tags?: string[];
+  /** Extra info to log when running this DAG */
+  info?: object;
   nodes: DagConfiguration<CONTEXT, INPUT>;
 }
 

@@ -26,6 +26,7 @@ export interface StateMachine<CONTEXT extends object, ROOTINPUT> {
   context: () => CONTEXT;
 
   tags?: string[];
+  info?: object;
 
   /** Where the state machine should start */
   initial: string;
@@ -43,6 +44,7 @@ export interface StateMachineNode<CONTEXT extends object, ROOTINPUT, INPUTS, OUT
   run?: (input: StateMachineNodeInput<CONTEXT, ROOTINPUT, INPUTS>) => Promise<OUTPUT>;
 
   tags?: string[];
+  info?: object;
 
   /** Mark this state as a final state.  Final states can still have transitions, such as if this
    * state machine interacts with a user and may or may not receive a response. This is only used to
