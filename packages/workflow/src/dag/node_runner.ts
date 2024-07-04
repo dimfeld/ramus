@@ -106,7 +106,7 @@ export class DagNodeRunner<
       this._finished = new Promise((resolve, reject) => {
         this.once('finish', resolve);
         this.once('cancelled', () => {
-          reject(new Error('Cancelled'));
+          reject(new CancelledError());
         });
         this.once('ramus:error', (e) => reject(e.error));
       });
@@ -237,11 +237,11 @@ export class DagNodeRunner<
           this.setState('running');
           try {
             if (this.config.parents) {
-              span.setAttribute('dag.node.parents', this.config.parents.join(', '));
+              span.setAttribute('workflow.dag.node.parents', this.config.parents.join(', '));
             }
 
             for (let [k, v] of Object.entries(this.inputs)) {
-              span.setAttribute(`dag.node.input.${k}`, toSpanAttributeValue(v));
+              span.setAttribute(`workflow.dag.node.input.${k}`, toSpanAttributeValue(v));
             }
 
             let output: OUTPUT;
@@ -253,7 +253,7 @@ export class DagNodeRunner<
 
             if (cachedValue) {
               output = JSON.parse(cachedValue) as OUTPUT;
-              span.setAttribute('dag:cache_hit', true);
+              span.setAttribute('workflow.dag.cache_hit', true);
             } else {
               output = await this.config.run({
                 input: this.inputs as INPUTS,
@@ -272,7 +272,7 @@ export class DagNodeRunner<
             }
 
             span.setAttribute(
-              `dag.node.output.${this.name}`,
+              `workflow.dag.node.output.${this.name}`,
               toSpanAttributeValue(output as object | AttributeValue)
             );
 
@@ -293,7 +293,7 @@ export class DagNodeRunner<
               throw e;
             }
           } finally {
-            span.setAttribute('dag.node.finishState', this.state);
+            span.setAttribute('workflow.dag.node.finishState', this.state);
           }
         }
       );

@@ -228,7 +228,10 @@ export class StateMachineRunner<CONTEXT extends object, ROOTINPUT, OUTPUT>
           if (config.run) {
             this.currentState.output = await config.run(nodeInput);
             if (span.isRecording()) {
-              span.setAttribute('output', toSpanAttributeValue(this.currentState.output as object));
+              span.setAttribute(
+                'workflow.state_machine.node.output',
+                toSpanAttributeValue(this.currentState.output as object)
+              );
             }
           }
 
