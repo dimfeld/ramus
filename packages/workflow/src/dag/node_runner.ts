@@ -2,21 +2,15 @@ import { EventEmitter } from 'events';
 import opentelemetry, { AttributeValue } from '@opentelemetry/api';
 import type { AnyInputs, DagNode, DagNodeState } from './types.js';
 import {
-  addSpanEvent,
-  getEventContext,
-  runInSpan,
+  ChronicleClientOptions,
+  RunContext,
   runStep,
-  stepSpanId,
+  runInSpan,
   toSpanAttributeValue,
-} from '../tracing.js';
-import { SpanStatusCode } from '@opentelemetry/api';
-import { ChronicleClientOptions } from 'chronicle-proxy';
-import { WorkflowEventCallback } from '../events.js';
+} from '@dimfeld/chronicle';
 import { calculateCacheKey, type NodeResultCache } from '../cache.js';
 import { Semaphore, acquireSemaphores } from '../semaphore.js';
 import { CancelledError } from '../errors.js';
-import { NotifyArgs } from '../types.js';
-import { uuidv7 } from 'uuidv7';
 
 export interface RunnerSuccessResult<T> {
   type: 'success';
@@ -38,17 +32,13 @@ export interface DagNodeRunnerOptions<
 > {
   name: string;
   dagName: string;
-  runId: string;
   config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   /** External input passed when running the DAG */
   rootInput: ROOTINPUT;
   cache?: NodeResultCache;
-  chronicle?: ChronicleClientOptions;
-  eventCb: WorkflowEventCallback;
   autorun?: () => boolean;
   semaphores?: Semaphore[];
-  parentStep: string;
 }
 
 export class DagNodeRunner<
@@ -59,13 +49,12 @@ export class DagNodeRunner<
 > extends EventEmitter<{
   state: [{ sourceNode: string; source: string; state: DagNodeState }];
   finish: [{ name: string; output: OUTPUT }];
-  'ramus:error': [Error];
+  'ramus:error': [{ error: Error }];
   cancelled: [];
   parentError: [];
 }> {
   name: string;
   dagName: string;
-  runId: string;
   config: DagNode<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>;
   context: CONTEXT;
   state: DagNodeState;
@@ -75,9 +64,7 @@ export class DagNodeRunner<
   chronicleOptions?: ChronicleClientOptions;
   semaphores?: Semaphore[];
   autorun: () => boolean;
-  eventCb: WorkflowEventCallback;
-  parentStep: string | null;
-  step: string | undefined;
+  runContext: RunContext | undefined;
   /** A promise which resolves when the node finishes or rejects on an error. */
   _finished: Promise<{ name: string; output: OUTPUT }> | undefined;
 
@@ -88,33 +75,29 @@ export class DagNodeRunner<
   constructor({
     name,
     dagName,
-    runId,
     config,
     context,
     rootInput,
-    chronicle,
     cache,
-    eventCb,
     autorun,
     semaphores,
-    parentStep,
   }: DagNodeRunnerOptions<CONTEXT, ROOTINPUT, INPUTS, OUTPUT>) {
     super();
     this.name = name;
-    this.runId = runId;
     this.dagName = dagName;
     this.config = config;
     this.rootInput = rootInput;
-    this.chronicleOptions = chronicle;
     this.cache = cache;
-    this.eventCb = eventCb;
     this.autorun = autorun ?? (() => true);
     this.context = context;
     this.state = 'waiting';
     this.semaphores = semaphores;
     this.waiting = new Set();
     this.inputs = {};
-    this.parentStep = parentStep;
+  }
+
+  setRunContext(runContext: RunContext) {
+    this.runContext = runContext;
   }
 
   get finished() {
@@ -125,30 +108,14 @@ export class DagNodeRunner<
         this.once('cancelled', () => {
           reject(new Error('Cancelled'));
         });
-        this.once('ramus:error', reject);
+        this.once('ramus:error', (e) => reject(e.error));
       });
     }
     return this._finished;
   }
 
   setState(state: DagNodeState) {
-    if (this.state === state) {
-      return;
-    }
-
-    this.getStepNumber();
-
     this.state = state;
-    this.eventCb({
-      type: 'dag:node_state',
-      data: { state },
-      runId: this.runId,
-      source: this.dagName,
-      sourceNode: this.name,
-      step: this.step!,
-      meta: this.chronicleOptions?.defaults?.metadata,
-      start_time: new Date(),
-    });
   }
 
   /** `init` is called after the constructors have all been run, which is mostly a design
@@ -219,14 +186,6 @@ export class DagNodeRunner<
     return this.waiting.size === 0 && this.stateReadyToRun();
   }
 
-  getStepNumber() {
-    if (typeof this.step === 'number') {
-      return;
-    }
-
-    this.step = uuidv7();
-  }
-
   async run(triggeredFromParentFinished = false): Promise<boolean> {
     const ready = this.readyToRun();
     if (triggeredFromParentFinished) {
@@ -245,41 +204,7 @@ export class DagNodeRunner<
       if (!ready && this.state !== 'error') {
         return false;
       }
-
-      this.getStepNumber();
     }
-
-    let step = `${this.dagName}:${this.name}`;
-    let chronicleOptions: ChronicleClientOptions | undefined;
-    if (this.chronicleOptions) {
-      chronicleOptions = {
-        ...this.chronicleOptions,
-        defaults: {
-          ...this.chronicleOptions?.defaults,
-          metadata: {
-            ...this.chronicleOptions?.defaults?.metadata,
-            step,
-          },
-        },
-      };
-    }
-
-    // This doesn't actually enforce that the `type` and `data` match but it's good enough for the few calls here.
-    const notify = (e: NotifyArgs) => {
-      let start_time = e.start_time || new Date();
-      let end_time = e.end_time || start_time;
-      this.eventCb({
-        type: e.type,
-        data: e.data,
-        runId: this.runId,
-        source: this.dagName,
-        sourceNode: this.name,
-        step: this.step!,
-        meta: chronicleOptions?.defaults?.metadata,
-        start_time,
-        end_time,
-      });
-    };
 
     const parentContext = this.parentSpanContext ?? opentelemetry.context.active();
     const semaphoreKey = this.config.semaphoreKey;
@@ -288,17 +213,22 @@ export class DagNodeRunner<
     try {
       await runStep(
         {
-          name: step,
-          parentStep: this.parentStep,
+          name: this.name,
+          type: 'dag:node',
+          input: {
+            input: this.inputs,
+            context: this.context,
+          },
+          tags: this.config.tags,
+          info: this.config.info,
+          parentRunContext: this.runContext,
           parentSpan: parentContext,
-          skipLogging: true,
-          newSourceName: this.name,
         },
-        async (span) => {
+        async (ctx, span) => {
           if (semaphoreKey && this.semaphores?.length) {
             this.setState('pendingSemaphore');
             semRelease = await runInSpan(
-              step + 'acquire semaphores',
+              'acquire semaphores',
               { attributes: { semaphoreKey } },
               () => acquireSemaphores(this.semaphores!, semaphoreKey)
             );
@@ -306,16 +236,6 @@ export class DagNodeRunner<
 
           this.setState('running');
           try {
-            notify({
-              type: 'dag:node_start',
-              data: {
-                input: this.inputs,
-                parent_step: this.parentStep,
-                span_id: stepSpanId(span),
-                tags: this.config.tags,
-                context: this.context,
-              },
-            });
             if (this.config.parents) {
               span.setAttribute('dag.node.parents', this.config.parents.join(', '));
             }
@@ -340,14 +260,6 @@ export class DagNodeRunner<
                 rootInput: this.rootInput,
                 context: this.context,
                 span,
-                chronicleOptions,
-                notify: (e: NotifyArgs, spanEvent = true) => {
-                  if (spanEvent) {
-                    addSpanEvent(span, e);
-                  }
-
-                  notify(e);
-                },
                 isCancelled: () => this.state === 'cancelled',
                 exitIfCancelled: () => {
                   if (this.state === 'cancelled') {
@@ -365,13 +277,6 @@ export class DagNodeRunner<
             );
 
             if (this.state !== 'cancelled') {
-              notify({
-                type: 'dag:node_finish',
-                data: {
-                  output,
-                  info: getEventContext().getRecordedStepInfo(),
-                },
-              });
               this.setState('finished');
               this.result = { type: 'success', output };
               this.emit('finish', { name: this.name, output });
@@ -379,23 +284,22 @@ export class DagNodeRunner<
           } catch (e) {
             if (e instanceof CancelledError) {
               // Don't emit an error if we were cancelled
+              ctx.recordStepInfo({ cancelled: true });
             } else {
               let err = e as Error;
               this.setState('error');
               this.result = { type: 'error', error: err };
-              notify({ type: 'dag:node_error', data: { error: err } });
-              this.emit('ramus:error', err);
-
-              span.recordException(err);
-              span.setAttribute('error', err?.message ?? 'true');
-              span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
+              this.emit('ramus:error', { error: err });
+              throw e;
             }
           } finally {
             span.setAttribute('dag.node.finishState', this.state);
-            span.end();
           }
         }
       );
+    } catch (e) {
+      // Ignore the error here since we handled it above, and just re-raised it so that
+      // runStep would log it properly.
     } finally {
       semRelease?.();
     }

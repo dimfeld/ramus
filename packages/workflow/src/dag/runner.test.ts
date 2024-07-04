@@ -2,17 +2,18 @@ import { expect, test } from 'bun:test';
 
 import { DagRunner, runDag } from './runner.js';
 import { Dag, DagConfiguration } from './types.js';
-import { WorkflowEvent } from '../events.js';
-import { startRun } from '../tracing.js';
+import { startRun, createChronicleClient, ChronicleEvent, RunStartEvent, StepStartEvent } from '@dimfeld/chronicle';
 
 interface Context {
   ctxValue: number;
 }
 
 function eventCatcher() {
-  let events: WorkflowEvent[] = [];
+  let events: ChronicleEvent[] = [];
+  let chronicle = createChronicleClient();
+  chronicle.on('event', (e) => events.push(e));
   return {
-    eventCb: (e) => events.push(e),
+    chronicle,
     events,
   };
 }
@@ -44,100 +45,45 @@ test('simple DAG', async () => {
     },
   };
 
-  const { eventCb, events } = eventCatcher();
+  const { chronicle, events } = eventCatcher();
 
-  await startRun(
+  const { id: runId } = await startRun(
     {
-      logEvent: eventCb,
-      runId: 'the_run_id',
+      chronicle,
     },
     async () => {
       const dag: Dag<Context, number> = {
         name: 'test',
         context: () => ({ ctxValue: 10 }),
         nodes,
+        tags: ['test-dag']
       };
 
-      let result = await runDag({ dag, input: 10, context: { ctxValue: 5 }, eventCb });
+      let result = await runDag({ dag, input: 10, context: { ctxValue: 5 }, chronicle });
       // 2 * ((5 + 1) + 1) + 10
       expect(result).toEqual(24);
     }
   );
 
-  const startEvent = events[0];
-  expect(startEvent.type).toEqual('dag:start');
-  expect(startEvent.step).toBeString();
+  const startEvent = events[0] as RunStartEvent;
+  expect(startEvent.type).toEqual('run:start');
+  expect(startEvent.id).toEqual(runId);
 
-  const nodeStartEvents = events.filter((e) => e.type === 'dag:node_start');
-  expect(nodeStartEvents.length).toEqual(5);
+  const nodeStartEvents = events.filter((e) => e.type === 'step:start') as StepStartEvent[];
+  // A step for each of the 5 nodes, plus the first step for the entire DAG
+  expect(nodeStartEvents.length).toEqual(6);
 
-  for (let event of nodeStartEvents) {
-    expect(event.data.parent_step).toEqual(startEvent.step);
+  const dagStartEvent = nodeStartEvents[0];
+  expect(dagStartEvent.run_id).toEqual(runId);
+  expect(dagStartEvent.data.name).toEqual('test');
+  expect(dagStartEvent.data.parent_step).toBeUndefined();
+  expect(dagStartEvent.data.tags).toEqual(['test-dag']);
+
+  for (let event of nodeStartEvents.slice(1)) {
+    expect(event.data.parent_step).toEqual(dagStartEvent.step_id!);
+    expect(event.run_id).toEqual(runId)
   }
 
-  for (let event of events) {
-    expect(event.runId).toEqual('the_run_id');
-  }
-});
-
-test('running from parent context', async () => {
-  const nodes: DagConfiguration<Context, number> = {
-    root: {
-      run: async ({ context }) => {
-        return context.ctxValue + 1;
-      },
-    },
-    intone: {
-      parents: ['root'],
-      run: async ({ input }) => {
-        return input.root + 1;
-      },
-    },
-    inttwo: {
-      parents: ['root'],
-      run: async ({ input }) => {
-        return input.root + 1;
-      },
-    },
-    collector: {
-      parents: ['intone', 'inttwo'],
-      run: async ({ input, rootInput }) => {
-        return input.intone + input.inttwo + rootInput;
-      },
-    },
-  };
-
-  const { eventCb, events } = eventCatcher();
-
-  const dag: Dag<Context, number> = {
-    name: 'test',
-    context: () => ({ ctxValue: 10 }),
-    nodes,
-  };
-
-  let result = await startRun(
-    {
-      parentStep: 'abc',
-      currentStep: 'def',
-      logEvent: eventCb,
-    },
-    () => runDag({ dag, input: 10, context: { ctxValue: 5 } })
-  );
-  // 2 * ((5 + 1) + 1) + 10
-  expect(result).toEqual(24);
-
-  const startEvent = events[0];
-  expect(startEvent.type).toEqual('dag:start');
-  expect(startEvent.step).not.toEqual('abc');
-  expect(startEvent.step).not.toEqual('def');
-  expect(startEvent.data.parent_step).toEqual('def');
-
-  const nodeStartEvents = events.filter((e) => e.type === 'dag:node_start');
-  expect(nodeStartEvents.length).toEqual(5);
-
-  for (let event of nodeStartEvents) {
-    expect(event.data.parent_step).toEqual(startEvent.step);
-  }
 });
 
 test('single node', async () => {
@@ -152,6 +98,7 @@ test('single node', async () => {
   const dag: Dag<Context, undefined> = {
     name: 'test',
     nodes,
+    context: () => ({ ctxValue: 10 }),
   };
 
   let result = await runDag({ dag, input: undefined, context: { ctxValue: 5 } });

@@ -1,7 +1,6 @@
 import { test, describe, expect } from 'bun:test';
-import { EventEmitter } from 'events';
-import { DagNodeRunner } from './node_runner';
-import { LocalSemaphore } from '../semaphore';
+import { DagNodeRunner } from './node_runner.js';
+import { LocalSemaphore } from '../semaphore.js';
 
 function outputCatcher(runner: DagNodeRunner<any, any, any, any>) {
   let finished = false;
@@ -18,7 +17,7 @@ function outputCatcher(runner: DagNodeRunner<any, any, any, any>) {
 
     runner.on('ramus:error', (e) => {
       finished = true;
-      reject(e);
+      reject(e.error);
     });
   });
 
@@ -43,7 +42,6 @@ function mockRunner(name: string, output: any, fail = false) {
     },
     rootInput: {},
     context: {} as any,
-    eventCb: () => {},
   });
   runner.init([]);
   return runner;
@@ -56,7 +54,6 @@ test('no parents', async () => {
     config: { run: ({ context }) => context.value + 1 },
     rootInput: {},
     context: { value: 1 },
-    eventCb: () => {},
   });
   const { promise, finished } = outputCatcher(runner);
 
@@ -83,7 +80,6 @@ test('single parent', async () => {
     rootInput: {},
     config: { parents: ['parent'], run: ({ context, input }) => input.parent + context.value + 1 },
     context: { value: 1 },
-    eventCb: () => {},
   });
 
   const { promise, finished } = outputCatcher(runner);
@@ -119,7 +115,6 @@ test('multiple parents', async () => {
     },
     rootInput: {},
     context: { value: 10 },
-    eventCb: () => {},
   });
 
   const { promise, finished } = outputCatcher(runner);
@@ -155,7 +150,6 @@ test('parent failed when errors are not tolerated', async () => {
     },
     rootInput: {},
     context: { value: 10 },
-    eventCb: () => {},
   });
 
   let sawParentError = false;
@@ -195,7 +189,6 @@ test('tolerate parent errors', async () => {
     },
     rootInput: {},
     context: { value: 10 },
-    eventCb: () => {},
   });
 
   let { promise, finished } = outputCatcher(runner);
@@ -228,7 +221,6 @@ test('tolerate parent errors, when all parents error', async () => {
     },
     rootInput: {},
     context: { value: 10 },
-    eventCb: () => {},
   });
 
   let { promise, finished } = outputCatcher(runner);
@@ -254,7 +246,6 @@ test('manual run', async () => {
     rootInput: {},
     config: { parents: ['parent'], run: ({ context, input }) => input.parent + context.value + 1 },
     context: { value: 1 },
-    eventCb: () => {},
     autorun: () => false,
   });
 
@@ -301,7 +292,6 @@ test('with semaphores', async () => {
     },
     rootInput: {},
     context: { value: 1 },
-    eventCb: () => {},
   });
   const { promise, finished } = outputCatcher(runner);
 

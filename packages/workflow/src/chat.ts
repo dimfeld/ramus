@@ -1,4 +1,4 @@
-import { WorkflowEventBase } from './events.js';
+import type { GenericEvent } from '@dimfeld/chronicle';
 
 export interface MessageToUserEventData {
   /** The ID of a message, used so that chats can append or replace an existing message. */
@@ -9,7 +9,7 @@ export interface MessageToUserEventData {
   replace?: boolean;
 }
 
-export type MessageToUserEvent = WorkflowEventBase<'chat', MessageToUserEventData>;
+export type MessageToUserEvent = GenericEvent<'chat', MessageToUserEventData>;
 
 export interface MessageFromUserEventData {
   text: string;

@@ -14,8 +14,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc && publint",
-    "dev": "tsc --watch --preserveWatchOutput"
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && publint",
+    "dev": "tsc --watch --preserveWatchOutput -p tsconfig.build.json"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",
@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.8.0",
-    "chronicle-proxy": "file:../../../chronicle/js-client",
+    "@dimfeld/chronicle": "file:../../../chronicle/js-client",
     "json-stable-stringify": "^1.1.1",
     "uuidv7": "^1.0.0"
   }
