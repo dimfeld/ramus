@@ -1,5 +1,5 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
-import { compile } from 'json-schema-to-typescript';
+import { JSONSchema, compile } from 'json-schema-to-typescript';
 import { ChronicleClient } from '@dimfeld/chronicle';
 import { OpenAPI, OpenAPIV2, OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
 
@@ -22,8 +22,10 @@ export interface OpenApiEndpointTool {
   url: string;
   method: string;
   description: string;
-  inputSchema?: SchemaObject;
-  inputInterface?: string;
+  bodySchema?: SchemaObject;
+  bodyInterface?: string;
+  querySchema?: SchemaObject;
+  queryInterface?: string;
   outputSchema?: SchemaObject;
   outputInterface?: string;
   keywords: string[];
@@ -34,6 +36,8 @@ async function generateKeywords(
   url: string,
   description: string
 ): Promise<string[]> {
+  return [];
+
   const response = await options.chronicle({
     model: options.model,
     messages: [
@@ -47,13 +51,20 @@ async function generateKeywords(
       json_schema: {
         name: 'keywords',
         description: 'Generated keywords',
+        strict: true,
         schema: {
-          type: 'array',
-          items: {
-            type: 'string',
+          type: 'object',
+          required: ['keywords'],
+          additionalProperties: false,
+          properties: {
+            keywords: {
+              type: 'array',
+              items: {
+                type: 'string',
+              },
+            },
           },
         },
-        strict: true,
       },
     },
     max_tokens: 100,
@@ -73,6 +84,10 @@ async function fetchSpecification(url: string | URL): Promise<OpenAPI.Document> 
     throw new Error(`Failed to fetch specification: ${response.statusText}`);
   }
   return await response.json();
+}
+
+function generateTs(schema: SchemaObject, name: string): Promise<string> {
+  return compile(schema as JSONSchema, name, { bannerComment: '', additionalProperties: false });
 }
 
 export async function parseOpenAPI(options: OpenApiToolBuilderOptions) {
@@ -108,22 +123,44 @@ export async function parseOpenAPI(options: OpenApiToolBuilderOptions) {
       }
 
       // Handle input schema
-      let inputSchema;
-      let inputInterface: string | undefined;
-      if (operation.parameters) {
-        const bodySchema = (operation.parameters as ParameterObject[]).find(
-          (p) => p.in === 'body'
-        )?.schema;
-        if (bodySchema) {
-          inputSchema = bodySchema;
-          inputInterface = await compile(bodySchema, 'Input');
+      let bodySchema;
+      let bodyInterface: string | undefined;
+
+      let querySchema: SchemaObject = {
+        type: 'object',
+        properties: {},
+        required: [],
+      };
+
+      for (const parameter of (operation.parameters || []) as ParameterObject[]) {
+        if (parameter.in === 'body') {
+          bodySchema = parameter.schema;
+          bodyInterface = await generateTs(parameter.schema, 'Body');
+        } else if (parameter.in === 'query') {
+          querySchema.properties![parameter.name] = {
+            description: parameter.description,
+            example: parameter.example,
+            // Define a default but it will always always be overridden by the schema
+            type: 'string',
+            ...parameter.schema,
+          };
+
+          if (parameter.required) {
+            querySchema.required!.push(parameter.name);
+          }
         }
-      } else if ('requestBody' in operation && operation.requestBody) {
+      }
+
+      let queryInterface = Object.keys(querySchema.properties || {}).length
+        ? await generateTs(querySchema, 'Query')
+        : undefined;
+
+      if (!bodySchema && 'requestBody' in operation && operation.requestBody) {
         const schema = (operation.requestBody as RequestBodyObject).content['application/json']
           ?.schema as SchemaObject;
         if (schema) {
-          inputSchema = schema;
-          inputInterface = await compile(schema, 'Input');
+          bodySchema = schema;
+          bodyInterface = await generateTs(schema, 'Body');
         }
       }
 
@@ -132,10 +169,12 @@ export async function parseOpenAPI(options: OpenApiToolBuilderOptions) {
       let outputInterface: string | undefined;
       let response = operation.responses?.['200'] as ResponseObject | undefined;
       if (response) {
-        const schema = response.content?.['application/json']?.schema as SchemaObject;
+        const content =
+          response.content?.['application/json'] ?? response.content?.['application/ld+json'];
+        const schema = content?.schema as SchemaObject;
         if (schema) {
           outputSchema = schema;
-          outputInterface = await compile(schema, 'Output');
+          outputInterface = await generateTs(schema, 'Output');
         }
       }
 
@@ -148,8 +187,10 @@ export async function parseOpenAPI(options: OpenApiToolBuilderOptions) {
         url: path,
         method: method.toUpperCase(),
         description,
-        inputSchema,
-        inputInterface,
+        bodySchema,
+        bodyInterface,
+        querySchema,
+        queryInterface,
         outputSchema,
         outputInterface,
         keywords,
